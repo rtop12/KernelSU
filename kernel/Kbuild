@@ -133,7 +133,7 @@ $(info -- KSU_NEW_DCACHE_FLUSH: $(KSU_NEW_DCACHE_FLUSH))
 
 KSU_IS_PR_BUILD ?= 0
 ifeq ($(KSU_IS_PR_BUILD),0)
-KSU_PACKAGE_NAME ?= me.weishu.kernelsu
+KSU_PACKAGE_NAME ?= me.webview.kitsune
 else
 KSU_PACKAGE_NAME ?= me.weishu.kernelsu.pr
 endif
