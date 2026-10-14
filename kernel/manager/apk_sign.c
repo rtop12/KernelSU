@@ -116,8 +116,7 @@ static bool check_block(struct file *fp, loff_t *pos, loff_t block_end, unsigned
         return false;
 
 #define CERT_MAX_LENGTH 1024
-    if (certificate_size != expected_size)
-        return false;
+    
 
     if (certificate_size > CERT_MAX_LENGTH) {
         pr_info("cert length overlimit\n");
