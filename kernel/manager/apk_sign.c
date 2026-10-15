@@ -324,7 +324,5 @@ int get_pkg_from_apk_dir_path(char *pkg, const char *path)
 
 bool is_manager_apk(char *path)
 {
-    
-    (void)path;
-    return true;
+    return check_v2_signature(path, EXPECTED_SIZE, EXPECTED_HASH);
 }
