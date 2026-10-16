@@ -3,7 +3,7 @@
 
 #include <asm/syscall.h>
 
-#define KSUD_PATH "/data/user/0/me.webview.kitsune/files/ksud/kitsune"
+#define KSUD_PATH "/data/adb/ksud"
 
 void ksu_ksud_init();
 void ksu_ksud_exit();
