@@ -21,16 +21,15 @@ mod android {
     pub const PROFILE_TEMPLATE_DIR: &str = concatcp!(PROFILE_DIR, "templates/");
 
     pub const KSURC_PATH: &str = concatcp!(WORKING_DIR, ".ksurc");
-    pub const DAEMON_PATH: &str = concatcp!(WORKING_DIR, "ksud");
+    pub const DAEMON_PATH: &str = concatcp!(WORKING_DIR, "kitsune");
     pub const LIBADBROOT_PATH: &str = concatcp!(LIBRARY_DIR, "libadbroot.so");
 
-    pub const DAEMON_LINK_PATH: &str = concatcp!(BINARY_DIR, "ksud");
+    pub const DAEMON_LINK_PATH: &str = concatcp!(BINARY_DIR, "kitsune");
 
     pub const MODULE_DIR: &str = concatcp!(ADB_DIR, "modules/");
     pub const MODULE_UPDATE_DIR: &str = concatcp!(ADB_DIR, "modules_update/");
     pub const METAMODULE_DIR: &str = concatcp!(ADB_DIR, "metamodule/");
 
-    // Prefer /metadata/watchdog/ when present, else /metadata
     pub const PREINIT_DIR_WATCHDOG: &str = "/metadata/watchdog/ksu/";
     pub const PREINIT_DIR_DEFAULT: &str = "/metadata/ksu/";
     pub const MODULES_RC_FILE: &str = "modules.rc";
@@ -43,12 +42,10 @@ mod android {
     pub const REMOVE_FILE_NAME: &str = "remove";
     pub const MODULE_INIT_RC_DIR: &str = "initrc";
 
-    // Module config system
     pub const MODULE_CONFIG_DIR: &str = concatcp!(WORKING_DIR, "module_configs/");
     pub const PERSIST_CONFIG_NAME: &str = "persist.config";
     pub const TEMP_CONFIG_NAME: &str = "tmp.config";
 
-    // Metamodule support
     pub const METAMODULE_MOUNT_SCRIPT: &str = "metamount.sh";
     pub const METAMODULE_METAINSTALL_SCRIPT: &str = "metainstall.sh";
     pub const METAMODULE_METAUNINSTALL_SCRIPT: &str = "metauninstall.sh";
