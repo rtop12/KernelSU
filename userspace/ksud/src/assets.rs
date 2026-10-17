@@ -15,7 +15,6 @@ mod android {
     pub fn ensure_binaries(ignore_if_exist: bool) -> anyhow::Result<()> {
         for file in Asset::iter() {
             if file == "ksuinit" || file == "waitsys" || file.ends_with(".ko") {
-                // don't extract internal executables and kernel modules
                 continue;
             }
             let asset =
@@ -23,12 +22,10 @@ mod android {
             ensure_binary(format!("{BINARY_DIR}{file}"), &asset.data, ignore_if_exist)?;
         }
 
-        // Create resetprop -> ksud symlink (resetprop is now built into ksud)
         let resetprop_link = RESETPROP_PATH;
         let _ = std::fs::remove_file(resetprop_link);
         
-        // 只改了这里这一个字符串
-        std::os::unix::fs::symlink("/data/adb/kitsune/ksud", resetprop_link)?;
+        std::os::unix::fs::symlink("/data/adb/kitsune/kitsune", resetprop_link)?;
 
         Ok(())
     }
@@ -36,8 +33,6 @@ mod android {
 
 #[cfg(target_os = "android")]
 pub use android::*;
-
-
 
 #[cfg(all(target_arch = "aarch64", target_os = "android"))]
 #[derive(RustEmbed)]
@@ -48,7 +43,6 @@ struct Asset;
 #[derive(RustEmbed)]
 #[folder = "bin"]
 struct Asset;
-
 
 #[allow(unused)]
 pub fn get_asset_data(name: &str) -> Result<std::borrow::Cow<'static, [u8]>> {
@@ -64,7 +58,6 @@ pub fn get_asset(name: &str) -> Result<Box<dyn AsRef<[u8]>>> {
 pub fn list_supported_kmi() -> std::vec::Vec<std::string::String> {
     let mut list = Vec::new();
     for file in Asset::iter() {
-        // kmi_name = "xxx_kernelsu.ko"
         if let Some(kmi) = file.strip_suffix("_kernelsu.ko") {
             list.push(kmi.to_string());
         }
