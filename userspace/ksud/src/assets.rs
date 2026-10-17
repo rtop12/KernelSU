@@ -4,8 +4,7 @@ use rust_embed::RustEmbed;
 #[cfg(target_os = "android")]
 mod android {
     use crate::assets::Asset;
-    
-    use crate::defs::{BINARY_DIR, DAEMON_PATH};
+    use crate::defs::BINARY_DIR;
     use crate::utils::ensure_binary;
     use const_format::concatcp;
 
@@ -28,8 +27,8 @@ mod android {
         let resetprop_link = RESETPROP_PATH;
         let _ = std::fs::remove_file(resetprop_link);
         
-        
-        std::os::unix::fs::symlink(DAEMON_PATH, resetprop_link)?;
+        // 只改了这里这一个字符串
+        std::os::unix::fs::symlink("/data/adb/kitsune/ksud", resetprop_link)?;
 
         Ok(())
     }
@@ -37,6 +36,7 @@ mod android {
 
 #[cfg(target_os = "android")]
 pub use android::*;
+
 
 
 #[cfg(all(target_arch = "aarch64", target_os = "android"))]
