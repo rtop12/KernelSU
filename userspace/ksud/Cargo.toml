@@ -59,3 +59,11 @@ prop-rs-android = { git = "https://github.com/KernelSU2/ksu_props", rev = "ddb6e
 
 [build-dependencies]
 bindgen = "0.73"
+
+# 新增加的体积优化配置
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
