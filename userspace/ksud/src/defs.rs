@@ -10,7 +10,6 @@ mod android {
     pub const BOOTLOG_TIMEOUT: &str = "30s";
 
     pub const ADB_DIR: &str = "/data/adb/";
-    // 工作目录改为 kitsune
     pub const WORKING_DIR: &str = concatcp!(ADB_DIR, "kitsune/");
     pub const BINARY_DIR: &str = concatcp!(WORKING_DIR, "bin/");
     pub const LIBRARY_DIR: &str = concatcp!(WORKING_DIR, "lib/");
@@ -22,15 +21,11 @@ mod android {
     pub const PROFILE_TEMPLATE_DIR: &str = concatcp!(PROFILE_DIR, "templates/");
 
     pub const KSURC_PATH: &str = concatcp!(WORKING_DIR, ".ksurc");
-    
-    
     pub const DAEMON_PATH: &str = concatcp!(WORKING_DIR, "ksud");
-    
     pub const LIBADBROOT_PATH: &str = concatcp!(LIBRARY_DIR, "libadbroot.so");
 
     pub const DAEMON_LINK_PATH: &str = concatcp!(BINARY_DIR, "ksud");
 
-    // 注意：模块目录依然保持在 /data/adb/modules 下，保证兼容性
     pub const MODULE_DIR: &str = concatcp!(ADB_DIR, "modules/");
     pub const MODULE_UPDATE_DIR: &str = concatcp!(ADB_DIR, "modules_update/");
     pub const METAMODULE_DIR: &str = concatcp!(ADB_DIR, "metamodule/");
