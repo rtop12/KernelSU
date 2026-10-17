@@ -42,6 +42,10 @@ pub use android::*;
 #[folder = "bin/aarch64"]
 struct Asset;
 
+#[cfg(not(target_os = "android"))]
+#[derive(RustEmbed)]
+#[folder = "bin"]
+struct Asset;
 
 
 #[allow(unused)]
