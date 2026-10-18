@@ -23,6 +23,19 @@ pub fn on_post_fs_data() -> Result<()> {
         warn!("clear temp configs failed: {e}");
     }
 
+    // Restore su alias to sysfs if it exists
+    if let Ok(alias) = std::fs::read_to_string(defs::SU_ALIAS_PATH) {
+        let alias = alias.trim();
+        if !alias.is_empty() {
+            let sysfs_path = "/sys/module/kernelsu/parameters/custom_su_path";
+            if let Err(e) = std::fs::write(sysfs_path, alias) {
+                warn!("Failed to restore su alias to sysfs: {e}");
+            } else {
+                info!("Restored su alias to: {alias}");
+            }
+        }
+    }
+
     let _ = catch_bootlog("logcat", &["logcat", "-b", "all"]);
     let _ = catch_bootlog("dmesg", &["dmesg", "-w", "-r"]);
 
