@@ -23,8 +23,8 @@ pub fn on_post_fs_data() -> Result<()> {
         warn!("clear temp configs failed: {e}");
     }
 
-    // Restore su alias to sysfs if it exists
-    if let Ok(alias) = std::fs::read_to_string(defs::SU_ALIAS_PATH) {
+    
+    if let Some(alias) = std::fs::read_to_string(defs::SU_ALIAS_PATH).ok() {
         let alias = alias.trim();
         if !alias.is_empty() {
             let sysfs_path = "/sys/module/kernelsu/parameters/custom_su_path";
