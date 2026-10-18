@@ -153,6 +153,12 @@ enum Commands {
         #[command(subcommand)]
         command: Initrc,
     },
+    
+    /// Set custom su alias path (default: /system/bin/su)
+    SetSuAlias {
+        /// The custom path, e.g., /system/bin/mysu (leave empty to reset to default)
+        path: String,
+    },
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -500,7 +506,24 @@ pub fn run() -> Result<()> {
 
     // the kernel executes su with argv[0] = "su" and replace it with us
     let arg0 = std::env::args().next().unwrap_or_default();
-    if arg0 == "su" || arg0.ends_with("/su") {
+    let mut is_root_request = arg0 == "su" || arg0.ends_with("/su");
+
+    if !is_root_request {
+        if let Ok(alias) = std::fs::read_to_string(defs::SU_ALIAS_PATH) {
+            let alias = alias.trim();
+            if !alias.is_empty() {
+                if let Some(file_name) = std::path::Path::new(alias).file_name() {
+                    if let Some(file_name_str) = file_name.to_str() {
+                        if arg0 == file_name_str || arg0.ends_with(&format!("/{}", file_name_str)) {
+                            is_root_request = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if is_root_request {
         return crate::su::root_shell();
     }
 
@@ -523,6 +546,22 @@ pub fn run() -> Result<()> {
         Commands::SoftReboot => crate::soft_reboot::soft_reboot(),
 
         Commands::Insmod { module, params } => debug::insmod(&module, &params),
+        
+        Commands::SetSuAlias { path } => {
+            let sysfs_path = "/sys/module/kernelsu/parameters/custom_su_path";
+            let default_path = "/system/bin/su";
+            
+            if path.is_empty() || path == default_path {
+                let _ = std::fs::remove_file(defs::SU_ALIAS_PATH);
+                std::fs::write(sysfs_path, default_path)?;
+                println!("Reset su alias to default: {}", default_path);
+            } else {
+                std::fs::write(defs::SU_ALIAS_PATH, &path)?;
+                std::fs::write(sysfs_path, &path)?;
+                println!("Set su alias to: {}", path);
+            }
+            Ok(())
+        }
 
         Commands::Module { command } => {
             utils::switch_mnt_ns(1)?;
