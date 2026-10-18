@@ -60,17 +60,13 @@ static const struct ksu_feature_handler su_compat_handler = {
 
 static void __user *userspace_stack_buffer(const void *d, size_t len)
 {
-    // To avoid having to mmap a page in userspace, just write below the stack
-    // pointer.
     char __user *p = (void __user *)current_user_stack_pointer() - len;
-
     return copy_to_user(p, d, len) ? NULL : p;
 }
 
 static char __user *ksud_user_path(void)
 {
     static const char ksud_path[] = KSUD_PATH;
-
     return userspace_stack_buffer(ksud_path, sizeof(ksud_path));
 }
 
@@ -82,7 +78,6 @@ static char __user *empty_user_path(void)
 static bool is_ksud_exists()
 {
     struct path path;
-
     if (kern_path(KSUD_PATH, 0, &path) < 0) {
         return false;
     }
@@ -106,7 +101,8 @@ long ksu_handle_faccessat_sucompat(int orig_nr, struct pt_regs *regs)
     memset(path, 0, sizeof(path));
     strncpy_from_user_nofault(path, *filename_user, sizeof(path) - 1);
 
-    if (unlikely(!strcmp(path, ksu_custom_su_path))) {
+    // 同时匹配自定义路径和系统默认路径，防止用户把默认 su 改掉后无法再次修改
+    if (unlikely(!strcmp(path, ksu_custom_su_path) || !strcmp(path, "/system/bin/su"))) {
         old_cred = override_creds(ksu_cred);
         if (is_ksud_exists()) {
             pr_info("faccessat su->ksud!\n");
@@ -141,7 +137,8 @@ long ksu_handle_stat_sucompat(int orig_nr, struct pt_regs *regs)
     memset(path, 0, sizeof(path));
     strncpy_from_user_nofault(path, *filename_user, sizeof(path) - 1);
 
-    if (unlikely(!strcmp(path, ksu_custom_su_path))) {
+    // 同时匹配自定义路径和系统默认路径
+    if (unlikely(!strcmp(path, ksu_custom_su_path) || !strcmp(path, "/system/bin/su"))) {
         old_cred = override_creds(ksu_cred);
         if (is_ksud_exists()) {
             pr_info("newfstatat su->ksud!\n");
@@ -194,7 +191,8 @@ static long ksu_handle_execve_sucompat_common(const char __user **filename_user,
         goto do_orig_execve;
     }
 
-    if (strcmp(path, ksu_custom_su_path))
+    // 同时匹配自定义路径和系统默认路径
+    if (strcmp(path, ksu_custom_su_path) && strcmp(path, "/system/bin/su"))
         goto do_orig_execve;
 
     pr_info("sys_execve su found: %s\n", path);
@@ -217,8 +215,6 @@ static long ksu_handle_execve_sucompat_common(const char __user **filename_user,
     fd_install(tmp_fd, ksud_file);
 
     pending_sucompat = ksu_sulog_capture_sucompat(*filename_user, argv_user, GFP_KERNEL);
-    // execve(file, argv, environ)
-    // execveat(fd, file, argv, environ, flags)
     orig_regs[0] = PT_REGS_SYSCALL_PARM1(regs);
     orig_regs[1] = regs->__PT_PARM2_REG;
     orig_regs[2] = regs->__PT_PARM3_REG;
@@ -245,8 +241,6 @@ static long ksu_handle_execve_sucompat_common(const char __user **filename_user,
         regs->__PT_SYSCALL_PARM4_REG = orig_regs[3];
         regs->__PT_PARM5_REG = orig_regs[4];
     } else {
-        // Only grant the scoped driver capability after the selected root
-        // profile has been applied successfully.
         su_fd = ksu_install_su_fd();
         if (su_fd < 0) {
             pr_warn("install su session fd failed: %d\n", su_fd);
@@ -270,7 +264,6 @@ long ksu_handle_execveat_sucompat(const char __user **filename_user, int orig_nr
                                              PT_REGS_SYSCALL_PARM4(regs), true, orig_nr, regs);
 }
 
-// sucompat: permitted process can execute 'su' to gain root access.
 void __init ksu_sucompat_init()
 {
     if (ksu_register_feature_handler(&su_compat_handler)) {
