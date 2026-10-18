@@ -14,7 +14,7 @@
 #include <linux/version.h>
 #include <linux/sched/task_stack.h>
 #include <linux/ptrace.h>
-#include <linux/moduleparam.h> // 新增
+#include <linux/moduleparam.h>
 
 #include "arch.h"
 #include "policy/allowlist.h"
@@ -33,7 +33,6 @@
 
 bool ksu_su_compat_enabled __read_mostly = true;
 
-// 1. 新增动态路径参数
 char ksu_custom_su_path[128] __read_mostly = "/system/bin/su";
 module_param_string(custom_su_path, ksu_custom_su_path, sizeof(ksu_custom_su_path), 0644);
 MODULE_PARM_DESC(custom_su_path, "Custom path for su binary");
@@ -103,11 +102,10 @@ long ksu_handle_faccessat_sucompat(int orig_nr, struct pt_regs *regs)
 
     filename_user = (const char __user **)&PT_REGS_PARM2(regs);
 
-    char path[256]; // 扩大数组
+    char path[256];
     memset(path, 0, sizeof(path));
     strncpy_from_user_nofault(path, *filename_user, sizeof(path) - 1);
 
-    // 2. 改为 strcmp 动态比对
     if (unlikely(!strcmp(path, ksu_custom_su_path))) {
         old_cred = override_creds(ksu_cred);
         if (is_ksud_exists()) {
@@ -139,11 +137,10 @@ long ksu_handle_stat_sucompat(int orig_nr, struct pt_regs *regs)
 
     filename_user = (const char __user **)&PT_REGS_PARM2(regs);
 
-    char path[256]; // 扩大数组
+    char path[256];
     memset(path, 0, sizeof(path));
     strncpy_from_user_nofault(path, *filename_user, sizeof(path) - 1);
 
-    // 3. 改为 strcmp 动态比对
     if (unlikely(!strcmp(path, ksu_custom_su_path))) {
         old_cred = override_creds(ksu_cred);
         if (is_ksud_exists()) {
@@ -169,7 +166,7 @@ static long ksu_handle_execve_sucompat_common(const char __user **filename_user,
 {
     const char __user *fn;
     struct ksu_sulog_pending_event *pending_sucompat = NULL;
-    char path[256]; // 扩大数组
+    char path[256];
     long ret, orig_regs[5];
     unsigned long addr;
     int su_fd = -1;
@@ -197,7 +194,6 @@ static long ksu_handle_execve_sucompat_common(const char __user **filename_user,
         goto do_orig_execve;
     }
 
-    // 4. 改为 strcmp 动态比对
     if (strcmp(path, ksu_custom_su_path))
         goto do_orig_execve;
 
