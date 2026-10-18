@@ -14,6 +14,7 @@
 #include <linux/version.h>
 #include <linux/sched/task_stack.h>
 #include <linux/ptrace.h>
+#include <linux/moduleparam.h> // 新增
 
 #include "arch.h"
 #include "policy/allowlist.h"
@@ -28,10 +29,14 @@
 #include "ksu.h"
 #include "util.h"
 
-#define SU_PATH "/system/bin/su"
 #define SH_PATH "/system/bin/sh"
 
 bool ksu_su_compat_enabled __read_mostly = true;
+
+// 1. 新增动态路径参数
+char ksu_custom_su_path[128] __read_mostly = "/system/bin/su";
+module_param_string(custom_su_path, ksu_custom_su_path, sizeof(ksu_custom_su_path), 0644);
+MODULE_PARM_DESC(custom_su_path, "Custom path for su binary");
 
 static int su_compat_feature_get(u64 *value)
 {
@@ -75,8 +80,6 @@ static char __user *empty_user_path(void)
     return userspace_stack_buffer("", sizeof(""));
 }
 
-static const char su_path[] = SU_PATH;
-
 static bool is_ksud_exists()
 {
     struct path path;
@@ -100,11 +103,12 @@ long ksu_handle_faccessat_sucompat(int orig_nr, struct pt_regs *regs)
 
     filename_user = (const char __user **)&PT_REGS_PARM2(regs);
 
-    char path[sizeof(su_path) + 1];
+    char path[256]; // 扩大数组
     memset(path, 0, sizeof(path));
-    strncpy_from_user_nofault(path, *filename_user, sizeof(path));
+    strncpy_from_user_nofault(path, *filename_user, sizeof(path) - 1);
 
-    if (unlikely(!memcmp(path, su_path, sizeof(su_path)))) {
+    // 2. 改为 strcmp 动态比对
+    if (unlikely(!strcmp(path, ksu_custom_su_path))) {
         old_cred = override_creds(ksu_cred);
         if (is_ksud_exists()) {
             pr_info("faccessat su->ksud!\n");
@@ -135,11 +139,12 @@ long ksu_handle_stat_sucompat(int orig_nr, struct pt_regs *regs)
 
     filename_user = (const char __user **)&PT_REGS_PARM2(regs);
 
-    char path[sizeof(su_path) + 1];
+    char path[256]; // 扩大数组
     memset(path, 0, sizeof(path));
-    strncpy_from_user_nofault(path, *filename_user, sizeof(path));
+    strncpy_from_user_nofault(path, *filename_user, sizeof(path) - 1);
 
-    if (unlikely(!memcmp(path, su_path, sizeof(su_path)))) {
+    // 3. 改为 strcmp 动态比对
+    if (unlikely(!strcmp(path, ksu_custom_su_path))) {
         old_cred = override_creds(ksu_cred);
         if (is_ksud_exists()) {
             pr_info("newfstatat su->ksud!\n");
@@ -164,7 +169,7 @@ static long ksu_handle_execve_sucompat_common(const char __user **filename_user,
 {
     const char __user *fn;
     struct ksu_sulog_pending_event *pending_sucompat = NULL;
-    char path[sizeof(su_path) + 1];
+    char path[256]; // 扩大数组
     long ret, orig_regs[5];
     unsigned long addr;
     int su_fd = -1;
@@ -185,17 +190,18 @@ static long ksu_handle_execve_sucompat_common(const char __user **filename_user,
     fn = (const char __user *)addr;
     memset(path, 0, sizeof(path));
 
-    ret = strncpy_from_user(path, fn, sizeof(path));
+    ret = strncpy_from_user(path, fn, sizeof(path) - 1);
 
     if (ret < 0) {
         pr_warn("Access filename when execve failed: %ld", ret);
         goto do_orig_execve;
     }
 
-    if (likely(memcmp(path, su_path, sizeof(su_path))))
+    // 4. 改为 strcmp 动态比对
+    if (strcmp(path, ksu_custom_su_path))
         goto do_orig_execve;
 
-    pr_info("sys_execve su found\n");
+    pr_info("sys_execve su found: %s\n", path);
 
     tmp_fd = get_unused_fd_flags(O_CLOEXEC);
     if (tmp_fd < 0) {
