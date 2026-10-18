@@ -508,8 +508,9 @@ pub fn run() -> Result<()> {
     let arg0 = std::env::args().next().unwrap_or_default();
     let mut is_root_request = arg0 == "su" || arg0.ends_with("/su");
 
+    // 修复点：使用 .ok() 避免 anyhow::Ok 的模式匹配冲突
     if !is_root_request {
-        if let Ok(alias) = std::fs::read_to_string(defs::SU_ALIAS_PATH) {
+        if let Some(alias) = std::fs::read_to_string(defs::SU_ALIAS_PATH).ok() {
             let alias = alias.trim();
             if !alias.is_empty() {
                 if let Some(file_name) = std::path::Path::new(alias).file_name() {
