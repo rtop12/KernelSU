@@ -25,6 +25,8 @@ mod android {
     pub const LIBADBROOT_PATH: &str = concatcp!(LIBRARY_DIR, "libadbroot.so");
 
     pub const DAEMON_LINK_PATH: &str = concatcp!(BINARY_DIR, "kitsune");
+    
+    pub const SU_ALIAS_PATH: &str = concatcp!(WORKING_DIR, ".su_alias");
 
     pub const MODULE_DIR: &str = concatcp!(ADB_DIR, "modules/");
     pub const MODULE_UPDATE_DIR: &str = concatcp!(ADB_DIR, "modules_update/");
