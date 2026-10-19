@@ -10,7 +10,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 libc = "0.2"
-retour = "0.3"
+# 使用纯 Rust 的 Android Inline Hook 实现，替换掉不兼容的 retour
+cydia-substrate-rs = { git = "https://github.com/rodroidmods/cydia-substrate-rs" }
 
 [profile.release]
 opt-level = "z"
