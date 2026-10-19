@@ -205,6 +205,10 @@ enum Attest {
 
     /// Verify the injected interceptor and keybox loadability (Phase 2)
     Verify,
+
+    /// Manually inject into a specific PID (for debugging)
+    #[command(hide = true)]
+    Inject { pid: i32 },
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -767,6 +771,7 @@ pub fn run() -> Result<()> {
             Attest::SetPatch { value } => crate::attest::cli_set_patch(&value),
             Attest::Reload => crate::attest::cli_reload(),
             Attest::Verify => crate::attest::cli_verify(),
+            Attest::Inject { pid } => crate::attest::cli_inject(pid),
         },
 
         Commands::Profile { command } => match command {
