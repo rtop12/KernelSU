@@ -24,8 +24,6 @@ jobs:
     - name: Download artifacts
       uses: actions/download-artifact@v8
     
-        
-    
     - name: Prepare ksuinit
       if: ${{ inputs.pack_ksuinit }}
       run: |
@@ -38,13 +36,27 @@ jobs:
 
     - uses: Swatinem/rust-cache@v2
       with:
-        workspaces: userspace/ksud
+        workspaces: |
+          userspace/ksud
+          userspace/interceptor
         cache-targets: false
 
     - uses: nttld/setup-ndk@v1
       id: setup-ndk
       with:
         ndk-version: r29
+
+    - name: Build interceptor
+      env:
+        ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      run: |
+        source .github/scripts/setup-rust-build.sh ${{ inputs.target }} 26
+        # 根据实际情况修改 --manifest-path 的路径
+        cargo build --target "$TRIPLE" --release --manifest-path ./userspace/interceptor/Cargo.toml
+        
+        # 将编译出的 .so 放入 ksud 的嵌入资源目录
+        mkdir -p ./userspace/ksud/bin/aarch64/
+        cp target/${{ inputs.target }}/release/libinterceptor.so ./userspace/ksud/bin/aarch64/libinterceptor.so
 
     - name: Build ksud
       env:
