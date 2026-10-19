@@ -1,8 +1,13 @@
-use std::sync::OnceLock;
+use retour::static_detour;
 
-use crate::binder::{resolve_transact, TransactFn};
+use crate::binder::resolve_transact;
 
-static ORIG: OnceLock<TransactFn> = OnceLock::new();
+// `static_detour!` must be expanded at module scope, not inside a function.
+retour::static_detour! {
+    static TRANSACT: unsafe extern "C" fn(
+        *mut libc::c_void, u32, *mut libc::c_void, *mut libc::c_void, u32
+    ) -> libc::c_int;
+}
 
 unsafe extern "C" fn transact_hook(
     binder: *mut libc::c_void,
@@ -11,17 +16,14 @@ unsafe extern "C" fn transact_hook(
     reply: *mut libc::c_void,
     flags: u32,
 ) -> libc::c_int {
-    let Some(orig) = ORIG.get() else {
-        return -1;
-    };
+    // Phase 1: log *every* transact code. We need the full set to identify
+    // KeyMint's generateKey / getKeyEntry codes before writing the Phase 2
+    // parcel parser. Filtering by guessed codes loses data we cannot recover.
+    crate::log::write(&format!("attest: transact code={code:#x}"));
 
-    // Phase 1: log only. Phase 2 will parse/rewrite `reply` here.
-    if matches!(code, 0x4b4d_4545 | 0x4b4d_4546) {
-        // placeholder codes; real KeyMint codes will be confirmed from logs
-        crate::log::write(&format!("attest: transact code={code:#x}"));
-    }
-
-    orig(binder, code, data, reply, flags)
+    // `TRANSACT.call` invokes the saved original. Calling `orig()` directly
+    // would recurse into the detour itself.
+    unsafe { TRANSACT.call(binder, code, data, reply, flags) }
 }
 
 pub fn install() {
@@ -29,16 +31,9 @@ pub fn install() {
         crate::log::write("attest: failed to resolve AIBinder_transact");
         return;
     };
-    let _ = ORIG.set(orig);
 
-    // Use retour inline hook. `initialize` may fail on some kernels; log and continue.
     unsafe {
-        let target: unsafe extern "C" fn(*mut libc::c_void, u32, *mut libc::c_void, *mut libc::c_void, u32) -> libc::c_int =
-            std::mem::transmute(orig);
-        static_detour! {
-            static TRANSACT: unsafe extern "C" fn(*mut libc::c_void, u32, *mut libc::c_void, *mut libc::c_void, u32) -> libc::c_int;
-        }
-        if let Err(e) = TRANSACT.initialize(target, transact_hook) {
+        if let Err(e) = TRANSACT.initialize(orig, transact_hook) {
             crate::log::write(&format!("attest: detour initialize failed: {e:?}"));
             return;
         }
