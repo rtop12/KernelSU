@@ -51,7 +51,7 @@ jobs:
         ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
       run: |
         source .github/scripts/setup-rust-build.sh ${{ inputs.target }} 26
-        # 编译 interceptor (注意这里的路径是 userspace/ksud/interceptor)
+        # 编译 interceptor
         cargo build --target "$TRIPLE" --release --manifest-path ./userspace/ksud/interceptor/Cargo.toml
         
         # 将编译出的 .so 放入 ksud 的嵌入资源目录
