@@ -1,23 +1,22 @@
 use anyhow::{bail, Context, Result};
-use libc::c_int;
+use libc::{c_int, c_void};
 
-// ptrace request codes. Android's libc declares ptrace() with `c_int`
-// for `request`, so the constants must match.
 const PTRACE_PEEKDATA: c_int = 2;
 const PTRACE_POKEDATA: c_int = 5;
-const PTRACE_GETREGS: c_int = 12;
-const PTRACE_SETREGS: c_int = 13;
 const PTRACE_ATTACH: c_int = 16;
 const PTRACE_DETACH: c_int = 17;
 const PTRACE_CONT: c_int = 7;
+
+// 新增 GETREGSET / SETREGSET
+const PTRACE_GETREGSET: c_int = 0x4204;
+const PTRACE_SETREGSET: c_int = 0x4205;
+const NT_PRSTATUS: u64 = 1;
 
 const RTLD_NOW: u64 = 2;
 const NR_MMAP: u64 = 222; // aarch64
 const PROT_READ_WRITE: u64 = 3;
 const MAP_PRIVATE_ANON: u64 = 0x22;
 
-// aarch64 Linux: struct user_pt_regs { __u64 regs[31]; sp; pc; pstate; }
-// regs[30] is LR (x30). There are exactly 31 general-purpose registers.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct UserRegs {
@@ -27,20 +26,34 @@ struct UserRegs {
     pstate: u64,
 }
 
+#[repr(C)]
+struct IoVec {
+    iov_base: *mut c_void,
+    iov_len: usize,
+}
+
 fn ptrace_call(req: c_int, pid: i32, addr: u64, data: u64) -> libc::c_long {
-    unsafe { libc::ptrace(req, pid, addr as *mut libc::c_void, data as *mut libc::c_void) }
+    unsafe { libc::ptrace(req, pid, addr as *mut c_void, data as *mut c_void) }
 }
 
 fn get_regs(pid: i32, regs: &mut UserRegs) -> Result<()> {
-    if ptrace_call(PTRACE_GETREGS, pid, 0, regs as *mut _ as u64) < 0 {
-        bail!("PTRACE_GETREGS: {}", std::io::Error::last_os_error());
+    let mut iov = IoVec {
+        iov_base: regs as *mut _ as *mut c_void,
+        iov_len: std::mem::size_of::<UserRegs>(),
+    };
+    if ptrace_call(PTRACE_GETREGSET, pid, NT_PRSTATUS, &mut iov as *mut _ as u64) < 0 {
+        bail!("PTRACE_GETREGSET: {}", std::io::Error::last_os_error());
     }
     Ok(())
 }
 
 fn set_regs(pid: i32, regs: &UserRegs) -> Result<()> {
-    if ptrace_call(PTRACE_SETREGS, pid, 0, regs as *const _ as u64) < 0 {
-        bail!("PTRACE_SETREGS: {}", std::io::Error::last_os_error());
+    let mut iov = IoVec {
+        iov_base: regs as *const _ as *mut c_void,
+        iov_len: std::mem::size_of::<UserRegs>(),
+    };
+    if ptrace_call(PTRACE_SETREGSET, pid, NT_PRSTATUS, &mut iov as *mut _ as u64) < 0 {
+        bail!("PTRACE_SETREGSET: {}", std::io::Error::last_os_error());
     }
     Ok(())
 }
@@ -69,14 +82,11 @@ fn poke_data(pid: i32, addr: u64, data: u64) -> Result<()> {
     Ok(())
 }
 
-// Kept for later phases (parcel inspection). Unused in Phase 1.
 #[allow(dead_code)]
 fn peek_data(pid: i32, addr: u64) -> Result<u64> {
     let ret = ptrace_call(PTRACE_PEEKDATA, pid, addr, 0);
     if ret < 0 {
         let err = std::io::Error::last_os_error();
-        // PEEKDATA returns -1 legitimately when the data word is 0xFFFF_FFFF_FFFF_FFFF.
-        // errno stays 0 in that case.
         if err.raw_os_error().unwrap_or(0) != 0 {
             bail!("PTRACE_PEEKDATA @ {:x}: {}", addr, err);
         }
@@ -84,30 +94,22 @@ fn peek_data(pid: i32, addr: u64) -> Result<u64> {
     Ok(ret as u64)
 }
 
-// Sanity-check that the register set looks like a live user thread before
-// we start writing to its stack. If `sp` is null or obviously bogus, abort
-// instead of corrupting memory.
 fn validate_saved(saved: &UserRegs) -> Result<()> {
     if saved.sp == 0 {
         bail!("target thread has sp=0, refusing to write trampoline");
     }
-    // Canonical user-space range on aarch64 (top of address space ends at
-    // 2^48 or 2^52; anything above TASK_SIZE is either kernel or unbacked).
     if saved.sp > (1u64 << 56) {
         bail!("target sp={:#x} is not a user address", saved.sp);
     }
     Ok(())
 }
 
-/// Execute an arbitrary function in the target: set x0..x5, pc, lr = a `brk #0` trampoline.
-/// Returns x0 after the `brk`.
 fn remote_call(
     pid: i32,
     saved: &UserRegs,
     func: u64,
     args: [u64; 6],
 ) -> Result<u64> {
-    // Place `brk #0` at (sp - 0x100) aligned to 16, so the target traps on return.
     let tramp = (saved.sp - 0x100) & !0xF;
     let brk: u64 = 0xD4200000; // brk #0
     poke_data(pid, tramp, brk)?;
@@ -131,10 +133,8 @@ fn remote_call(
     Ok(out.regs[0])
 }
 
-/// Remote mmap via `svc #0` trampoline on the target stack.
 fn remote_mmap(pid: i32, saved: &UserRegs, size: u64) -> Result<u64> {
     let tramp = (saved.sp - 0x200) & !0xF;
-    // svc #0 ; brk #0
     let svc: u64 = 0xD4000001;
     let brk: u64 = 0xD4200000;
     poke_data(pid, tramp, svc)?;
@@ -142,12 +142,12 @@ fn remote_mmap(pid: i32, saved: &UserRegs, size: u64) -> Result<u64> {
 
     let mut regs = *saved;
     regs.regs[8] = NR_MMAP;
-    regs.regs[0] = 0; // addr: kernel chooses
+    regs.regs[0] = 0;
     regs.regs[1] = size;
     regs.regs[2] = PROT_READ_WRITE;
     regs.regs[3] = MAP_PRIVATE_ANON;
-    regs.regs[4] = u64::MAX; // fd = -1
-    regs.regs[5] = 0; // offset
+    regs.regs[4] = u64::MAX;
+    regs.regs[5] = 0;
     regs.pc = tramp;
 
     set_regs(pid, &regs)?;
@@ -160,7 +160,6 @@ fn remote_mmap(pid: i32, saved: &UserRegs, size: u64) -> Result<u64> {
 }
 
 fn write_remote(pid: i32, dst: u64, bytes: &[u8]) -> Result<()> {
-    // Word-by-word POKEDATA. dst should be 8-byte aligned (mmap result is page-aligned).
     let mut i = 0;
     while i < bytes.len() {
         let mut word = [0u8; 8];
@@ -172,12 +171,6 @@ fn write_remote(pid: i32, dst: u64, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-// Parse /proc/<pid>/maps and return (load_base, on_disk_path) for `soname`.
-//
-// The ELF load base is `start - offset` where `offset` is 0. Taking the first
-// mapping's start works only when the first mapping happens to have offset 0,
-// which is *not* guaranteed on Android: the loader maps a small r--p stub
-// first. Always subtract `offset`.
 fn resolve_so_base(pid: i32, soname: &str) -> Result<(u64, String)> {
     let maps = std::fs::read_to_string(format!("/proc/{pid}/maps"))
         .with_context(|| format!("read /proc/{pid}/maps"))?;
@@ -192,11 +185,7 @@ fn resolve_so_base(pid: i32, soname: &str) -> Result<(u64, String)> {
             continue;
         }
         let range = parts[0];
-        let start = u64::from_str_radix(
-            range.split('-').next().unwrap_or("0"),
-            16,
-        )
-        .unwrap_or(0);
+        let start = u64::from_str_radix(range.split('-').next().unwrap_or("0"), 16).unwrap_or(0);
         let file_offset = u64::from_str_radix(parts[2], 16).unwrap_or(u64::MAX);
         if start == 0 || file_offset == u64::MAX {
             continue;
@@ -235,7 +224,6 @@ fn elf_dynsym_value(data: &[u8], name: &str) -> Result<Option<u64>> {
         }
         let sh_type = u32::from_le_bytes(data[sh + 4..sh + 8].try_into().unwrap());
         if sh_type == 11 {
-            // SHT_DYNSYM
             dynsym_off = u64::from_le_bytes(data[sh + 24..sh + 32].try_into().unwrap()) as usize;
             dynsym_size = u64::from_le_bytes(data[sh + 32..sh + 40].try_into().unwrap()) as usize;
             let link = u32::from_le_bytes(data[sh + 40..sh + 44].try_into().unwrap()) as usize;
@@ -243,10 +231,8 @@ fn elf_dynsym_value(data: &[u8], name: &str) -> Result<Option<u64>> {
             if str_sh + 40 > data.len() {
                 continue;
             }
-            dynstr_off =
-                u64::from_le_bytes(data[str_sh + 24..str_sh + 32].try_into().unwrap()) as usize;
-            dynstr_size =
-                u64::from_le_bytes(data[str_sh + 32..str_sh + 40].try_into().unwrap()) as usize;
+            dynstr_off = u64::from_le_bytes(data[str_sh + 24..str_sh + 32].try_into().unwrap()) as usize;
+            dynstr_size = u64::from_le_bytes(data[str_sh + 32..str_sh + 40].try_into().unwrap()) as usize;
             break;
         }
     }
@@ -326,8 +312,6 @@ fn inject_inner(pid: i32, so_path: &str) -> Result<()> {
     validate_saved(&saved)?;
 
     let remote_mem = remote_mmap(pid, &saved, 0x1000)?;
-    // mmap failure comes back as an errno encoded as a negative long.
-    // `== u64::MAX` only catches -1; anything with the top bit set is a failure.
     if remote_mem == 0 || (remote_mem as i64) < 0 {
         bail!("remote mmap failed (returned {:#x})", remote_mem);
     }
