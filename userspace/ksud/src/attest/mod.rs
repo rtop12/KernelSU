@@ -29,6 +29,13 @@ fn is_enabled() -> bool {
 }
 
 pub fn install_interceptor_lib() -> Result<()> {
+    let target_path = crate::defs::ATTEST_LIB_PATH;
+
+    // 如果手机里已经有这个文件了，直接跳过释放逻辑（方便手动 push 测试）
+    if std::path::Path::new(target_path).exists() {
+        return Ok(());
+    }
+
     let data = crate::assets::get_asset_data("libinterceptor.so").context(
         "libinterceptor.so is not embedded; build the interceptor crate and copy it to ksud/bin/aarch64/",
     )?;
