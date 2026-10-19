@@ -6,14 +6,14 @@ const PTRACE_POKEDATA: c_int = 5;
 const PTRACE_ATTACH: c_int = 16;
 const PTRACE_DETACH: c_int = 17;
 const PTRACE_CONT: c_int = 7;
+const PTRACE_SINGLESTEP: c_int = 9;
 
 const PTRACE_GETREGSET: c_int = 0x4204;
 const PTRACE_SETREGSET: c_int = 0x4205;
 const NT_PRSTATUS: u64 = 1;
 
 const RTLD_NOW: u64 = 2;
-// 分配 RWX (读、写、执行) 内存
-const PROT_READ_WRITE_EXEC: u64 = 7;
+const PROT_READ_WRITE: u64 = 3;
 const MAP_PRIVATE_ANON: u64 = 0x22;
 
 #[repr(C)]
@@ -67,11 +67,6 @@ fn wait_stopped(pid: i32) -> Result<()> {
     if !libc::WIFSTOPPED(status) {
         bail!("target did not stop: status=0x{status:x}");
     }
-    
-    let sig = libc::WSTOPSIG(status);
-    if sig != libc::SIGTRAP && sig != libc::SIGSTOP && sig != libc::SIGSEGV {
-        bail!("target stopped by unexpected signal: {}", sig);
-    }
     Ok(())
 }
 
@@ -84,53 +79,6 @@ fn poke_data(pid: i32, addr: u64, data: u64) -> Result<()> {
         );
     }
     Ok(())
-}
-
-fn validate_saved(saved: &UserRegs) -> Result<()> {
-    if saved.sp == 0 {
-        bail!("target thread has sp=0, refusing to write trampoline");
-    }
-    if saved.sp > (1u64 << 56) {
-        bail!("target sp={:#x} is not a user address", saved.sp);
-    }
-    Ok(())
-}
-
-// 支持自定义返回地址 (lr) 的远程调用
-fn remote_call_with_lr(
-    pid: i32,
-    saved: &UserRegs,
-    func: u64,
-    args: [u64; 6],
-    lr: u64,
-) -> Result<u64> {
-    let mut regs = *saved;
-    regs.regs[0] = args[0];
-    regs.regs[1] = args[1];
-    regs.regs[2] = args[2];
-    regs.regs[3] = args[3];
-    regs.regs[4] = args[4];
-    regs.regs[5] = args[5];
-    regs.regs[30] = lr; // 使用传入的安全返回地址
-    regs.pc = func;
-
-    set_regs(pid, &regs)?;
-    ptrace_call(PTRACE_CONT, pid, 0, 0);
-    wait_stopped(pid)?;
-
-    let mut out = UserRegs::default();
-    get_regs(pid, &mut out)?;
-    Ok(out.regs[0])
-}
-
-fn remote_mmap(pid: i32, saved: &UserRegs, size: u64) -> Result<u64> {
-    let mmap_fn = resolve_libc_symbol(pid, "mmap")?;
-    // 使用 PROT_READ_WRITE_EXEC (7) 确保可以执行
-    let ret = remote_call_with_lr(pid, saved, mmap_fn, [0, size, PROT_READ_WRITE_EXEC, MAP_PRIVATE_ANON, u64::MAX, 0], 0)?;
-    if ret == u64::MAX {
-        bail!("remote mmap failed (returned -1)");
-    }
-    Ok(ret)
 }
 
 fn write_remote(pid: i32, dst: u64, bytes: &[u8]) -> Result<()> {
@@ -283,35 +231,60 @@ pub fn inject(pid: i32, so_path: &str) -> Result<()> {
 fn inject_inner(pid: i32, so_path: &str) -> Result<()> {
     let mut saved = UserRegs::default();
     get_regs(pid, &mut saved)?;
-    validate_saved(&saved)?;
 
-    // 分配 0x2000，其中 0x1000 用于字符串，0x1000 用于存跳板指令
-    let remote_mem = remote_mmap(pid, &saved, 0x2000)?;
-    if remote_mem == 0 || (remote_mem as i64) < 0 {
-        bail!("remote mmap failed (returned {:#x})", remote_mem);
+    // 申请内存
+    let mmap_fn = resolve_libc_symbol(pid, "mmap")?;
+    
+    // 准备调用 mmap，lr 设为 0，执行完后会停在不可执行地址触发 SIGSEGV
+    let mut regs = saved;
+    regs.regs[0] = 0;
+    regs.regs[1] = 0x1000;
+    regs.regs[2] = PROT_READ_WRITE;
+    regs.regs[3] = MAP_PRIVATE_ANON;
+    regs.regs[4] = u64::MAX;
+    regs.regs[5] = 0;
+    regs.regs[30] = 0; // lr = 0
+    regs.pc = mmap_fn;
+
+    set_regs(pid, &regs)?;
+    ptrace_call(PTRACE_CONT, pid, 0, 0);
+    wait_stopped(pid)?;
+    
+    let mut out = UserRegs::default();
+    get_regs(pid, &mut out)?;
+    let remote_mem = out.regs[0];
+    if (remote_mem as i64) <= 0 {
+        bail!("mmap failed with {:#x}", remote_mem);
     }
 
-    let path_addr = remote_mem;
-    let tramp_addr = remote_mem + 0x1000;
-
+    // 写路径
     let mut buf = Vec::with_capacity(so_path.len() + 1);
     buf.extend_from_slice(so_path.as_bytes());
     buf.push(0);
-    write_remote(pid, path_addr, &buf)?;
+    write_remote(pid, remote_mem, &buf)?;
 
-    // 将 BRK 写到跳板地址
-    let brk: u64 = 0xD4200000;
-    write_remote(pid, tramp_addr, &brk.to_le_bytes())?;
-
-    let dlopen = resolve_libc_symbol(pid, "dlopen")
+    // 调用 dlopen
+    let dlopen_fn = resolve_libc_symbol(pid, "dlopen")
         .or_else(|_| resolve_libc_symbol(pid, "__libc_dlopen_mode"))?;
+    let mut regs = saved;
+    regs.regs[0] = remote_mem;
+    regs.regs[1] = RTLD_NOW;
+    regs.regs[30] = 0; // 再次设 lr 为 0
+    regs.pc = dlopen_fn;
+
+    set_regs(pid, &regs)?;
+    ptrace_call(PTRACE_CONT, pid, 0, 0);
+    wait_stopped(pid)?;
+
+    get_regs(pid, &mut out)?;
+    let handle = out.regs[0];
     
-    // 调用 dlopen，并将 LR 设置为合法的可执行内存地址 tramp_addr
-    let ret = remote_call_with_lr(pid, &saved, dlopen, [path_addr, RTLD_NOW, 0, 0, 0, 0], tramp_addr)?;
-    
-    if ret == 0 {
-        bail!("dlopen returned NULL");
+    // 恢复原寄存器
+    set_regs(pid, &saved)?;
+
+    if handle == 0 {
+        bail!("dlopen returned NULL (check dependencies or SELinux)");
     }
-    log::info!("attest: injected {so_path} into pid {pid}, handle={ret:#x}");
+    log::info!("attest: injected {so_path} into pid {pid}, handle={handle:#x}");
     Ok(())
 }
