@@ -56,9 +56,11 @@ jobs:
     - name: Copy interceptor lib
       run: |
         mkdir -p ./userspace/ksud/bin/aarch64/
-        SO_PATH=$(find target/${{ inputs.target }}/release -name "libinterceptor.so" -o -name "libinterceptor-*.so" | head -n 1)
+        # 在 interceptor 独立的 target 目录里查找编译产物
+        SO_PATH=$(find userspace/ksud/interceptor/target/${{ inputs.target }}/release -name "libinterceptor.so" | head -n 1)
         if [ -z "$SO_PATH" ]; then
           echo "ERROR: libinterceptor.so not found"
+          find userspace/ksud/interceptor/target -name "*.so" || true
           exit 1
         fi
         cp "$SO_PATH" ./userspace/ksud/bin/aarch64/libinterceptor.so
