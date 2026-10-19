@@ -7,13 +7,11 @@ const PTRACE_ATTACH: c_int = 16;
 const PTRACE_DETACH: c_int = 17;
 const PTRACE_CONT: c_int = 7;
 
-// 新增 GETREGSET / SETREGSET
 const PTRACE_GETREGSET: c_int = 0x4204;
 const PTRACE_SETREGSET: c_int = 0x4205;
 const NT_PRSTATUS: u64 = 1;
 
 const RTLD_NOW: u64 = 2;
-const NR_MMAP: u64 = 222; // aarch64
 const PROT_READ_WRITE: u64 = 3;
 const MAP_PRIVATE_ANON: u64 = 0x22;
 
@@ -67,6 +65,12 @@ fn wait_stopped(pid: i32) -> Result<()> {
     }
     if !libc::WIFSTOPPED(status) {
         bail!("target did not stop: status=0x{status:x}");
+    }
+    
+    // 如果目标不是被断点(SIGTRAP)停下，而是被其他信号(比如 SIGSEGV)打断，说明执行出错了
+    let sig = libc::WSTOPSIG(status);
+    if sig != libc::SIGTRAP {
+        bail!("target stopped by unexpected signal: {}", sig);
     }
     Ok(())
 }
@@ -133,30 +137,18 @@ fn remote_call(
     Ok(out.regs[0])
 }
 
+// 修改为调用 __libc_mmap，不再手写 svc 汇编
 fn remote_mmap(pid: i32, saved: &UserRegs, size: u64) -> Result<u64> {
-    let tramp = (saved.sp - 0x200) & !0xF;
-    let svc: u64 = 0xD4000001;
-    let brk: u64 = 0xD4200000;
-    poke_data(pid, tramp, svc)?;
-    poke_data(pid, tramp + 8, brk)?;
-
-    let mut regs = *saved;
-    regs.regs[8] = NR_MMAP;
-    regs.regs[0] = 0;
-    regs.regs[1] = size;
-    regs.regs[2] = PROT_READ_WRITE;
-    regs.regs[3] = MAP_PRIVATE_ANON;
-    regs.regs[4] = u64::MAX;
-    regs.regs[5] = 0;
-    regs.pc = tramp;
-
-    set_regs(pid, &regs)?;
-    ptrace_call(PTRACE_CONT, pid, 0, 0);
-    wait_stopped(pid)?;
-
-    let mut out = UserRegs::default();
-    get_regs(pid, &mut out)?;
-    Ok(out.regs[0])
+    let mmap_fn = resolve_libc_symbol(pid, "__libc_mmap")?;
+    
+    // __libc_mmap(addr=0, length=size, prot, flags, fd=-1, offset=0)
+    let ret = remote_call(pid, saved, mmap_fn, [0, size, PROT_READ_WRITE, MAP_PRIVATE_ANON, u64::MAX, 0])?;
+    
+    if ret == u64::MAX {
+        bail!("remote __libc_mmap failed (returned -1)");
+    }
+    
+    Ok(ret)
 }
 
 fn write_remote(pid: i32, dst: u64, bytes: &[u8]) -> Result<()> {
