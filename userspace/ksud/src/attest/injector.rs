@@ -1,29 +1,33 @@
 use anyhow::{bail, Context, Result};
-use libc::c_long;
+use libc::c_uint;
 
-const PTRACE_PEEKDATA: c_long = 2;
-const PTRACE_POKEDATA: c_long = 5;
-const PTRACE_GETREGS: c_long = 12;
-const PTRACE_SETREGS: c_long = 13;
-const PTRACE_ATTACH: c_long = 16;
-const PTRACE_DETACH: c_long = 17;
-const PTRACE_CONT: c_long = 7;
+// ptrace request codes. libc declares ptrace() with `c_uint` for `request`
+// (see bionic/sys/ptrace.h), so the constants must match.
+const PTRACE_PEEKDATA: c_uint = 2;
+const PTRACE_POKEDATA: c_uint = 5;
+const PTRACE_GETREGS: c_uint = 12;
+const PTRACE_SETREGS: c_uint = 13;
+const PTRACE_ATTACH: c_uint = 16;
+const PTRACE_DETACH: c_uint = 17;
+const PTRACE_CONT: c_uint = 7;
 
 const RTLD_NOW: u64 = 2;
 const NR_MMAP: u64 = 222; // aarch64
 const PROT_READ_WRITE: u64 = 3;
 const MAP_PRIVATE_ANON: u64 = 0x22;
 
+// aarch64 Linux: struct user_pt_regs { __u64 regs[31]; sp; pc; pstate; }
+// regs[30] is LR (x30). There are exactly 31 general-purpose registers.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct UserRegs {
-    regs: [u64; 34],
+    regs: [u64; 31],
     sp: u64,
     pc: u64,
     pstate: u64,
 }
 
-fn ptrace_call(req: c_long, pid: i32, addr: u64, data: u64) -> c_long {
+fn ptrace_call(req: c_uint, pid: i32, addr: u64, data: u64) -> libc::c_long {
     unsafe { libc::ptrace(req, pid, addr as *mut libc::c_void, data as *mut libc::c_void) }
 }
 
@@ -48,6 +52,9 @@ fn wait_stopped(pid: i32) -> Result<()> {
             bail!("waitpid: {}", std::io::Error::last_os_error());
         }
     }
+    if !libc::WIFSTOPPED(status) {
+        bail!("target did not stop: status=0x{status:x}");
+    }
     Ok(())
 }
 
@@ -62,16 +69,34 @@ fn poke_data(pid: i32, addr: u64, data: u64) -> Result<()> {
     Ok(())
 }
 
+// Kept for later phases (parcel inspection). Unused in Phase 1.
+#[allow(dead_code)]
 fn peek_data(pid: i32, addr: u64) -> Result<u64> {
     let ret = ptrace_call(PTRACE_PEEKDATA, pid, addr, 0);
-    if ret < 0 && std::io::Error::last_os_error().raw_os_error() != Some(0) {
-        bail!(
-            "PTRACE_PEEKDATA @ {:x}: {}",
-            addr,
-            std::io::Error::last_os_error()
-        );
+    if ret < 0 {
+        let err = std::io::Error::last_os_error();
+        // PEEKDATA returns -1 legitimately when the data word is 0xFFFF_FFFF_FFFF_FFFF.
+        // errno stays 0 in that case.
+        if err.raw_os_error().unwrap_or(0) != 0 {
+            bail!("PTRACE_PEEKDATA @ {:x}: {}", addr, err);
+        }
     }
     Ok(ret as u64)
+}
+
+// Sanity-check that the register set looks like a live user thread before
+// we start writing to its stack. If `sp` is null or obviously bogus, abort
+// instead of corrupting memory.
+fn validate_saved(saved: &UserRegs) -> Result<()> {
+    if saved.sp == 0 {
+        bail!("target thread has sp=0, refusing to write trampoline");
+    }
+    // Canonical user-space range on aarch64 (top of address space ends at
+    // 2^48 or 2^52; anything above TASK_SIZE is either kernel or unbacked).
+    if saved.sp > (1u64 << 56) {
+        bail!("target sp={:#x} is not a user address", saved.sp);
+    }
+    Ok(())
 }
 
 /// Execute an arbitrary function in the target: set x0..x5, pc, lr = a `brk #0` trampoline.
@@ -117,12 +142,12 @@ fn remote_mmap(pid: i32, saved: &UserRegs, size: u64) -> Result<u64> {
 
     let mut regs = *saved;
     regs.regs[8] = NR_MMAP;
-    regs.regs[0] = 0;
+    regs.regs[0] = 0; // addr: kernel chooses
     regs.regs[1] = size;
     regs.regs[2] = PROT_READ_WRITE;
     regs.regs[3] = MAP_PRIVATE_ANON;
-    regs.regs[4] = u64::MAX;
-    regs.regs[5] = 0;
+    regs.regs[4] = u64::MAX; // fd = -1
+    regs.regs[5] = 0; // offset
     regs.pc = tramp;
 
     set_regs(pid, &regs)?;
@@ -147,40 +172,46 @@ fn write_remote(pid: i32, dst: u64, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-fn resolve_libc_symbol(pid: i32, name: &str) -> Result<u64> {
+// Parse /proc/<pid>/maps and return (load_base, on_disk_path) for `soname`.
+//
+// The ELF load base is `start - offset` where `offset` is 0. Taking the first
+// mapping's start works only when the first mapping happens to have offset 0,
+// which is *not* guaranteed on Android: the loader maps a small r--p stub
+// first. Always subtract `offset`.
+fn resolve_so_base(pid: i32, soname: &str) -> Result<(u64, String)> {
     let maps = std::fs::read_to_string(format!("/proc/{pid}/maps"))
-        .context("read /proc/pid/maps")?;
-    let mut base = None;
-    let mut path = None;
+        .with_context(|| format!("read /proc/{pid}/maps"))?;
+
     for line in maps.lines() {
-        if !line.contains("libc.so") {
-            continue;
-        }
-        // start-end perms offset dev inode path
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 6 {
             continue;
         }
-        let start = u64::from_str_radix(parts[0].split('-').next().unwrap_or("0"), 16).unwrap_or(0);
-        if start == 0 {
+        let path = parts[5];
+        if !path.contains(soname) {
             continue;
         }
-        // The first r-xp mapping is not necessarily the base; the base is the lowest
-        // mapping of the file. Take the first entry's start as the base.
-        if base.is_none() {
-            base = Some(start);
+        let range = parts[0];
+        let start = u64::from_str_radix(
+            range.split('-').next().unwrap_or("0"),
+            16,
+        )
+        .unwrap_or(0);
+        let file_offset = u64::from_str_radix(parts[2], 16).unwrap_or(u64::MAX);
+        if start == 0 || file_offset == u64::MAX {
+            continue;
         }
-        if path.is_none() {
-            path = Some(parts[5].to_string());
-        }
+        let base = start.saturating_sub(file_offset);
+        return Ok((base, path.to_string()));
     }
-    let base = base.context("libc.so not mapped in target")?;
-    let path = path.context("libc.so path missing")?;
+    bail!("{soname} not mapped in pid {pid}")
+}
 
-    // Parse the on-disk ELF's .dynsym for `name`.
+fn resolve_libc_symbol(pid: i32, name: &str) -> Result<u64> {
+    let (base, path) = resolve_so_base(pid, "libc.so")?;
     let data = std::fs::read(&path).with_context(|| format!("read {path}"))?;
-    let value = elf_dynsym_value(&data, name)?
-        .with_context(|| format!("{name} not found in {path}"))?;
+    let value =
+        elf_dynsym_value(&data, name)?.with_context(|| format!("{name} not found in {path}"))?;
     Ok(base + value)
 }
 
@@ -209,25 +240,36 @@ fn elf_dynsym_value(data: &[u8], name: &str) -> Result<Option<u64>> {
             dynsym_size = u64::from_le_bytes(data[sh + 32..sh + 40].try_into().unwrap()) as usize;
             let link = u32::from_le_bytes(data[sh + 40..sh + 44].try_into().unwrap()) as usize;
             let str_sh = shoff + link * shentsize;
-            dynstr_off = u64::from_le_bytes(data[str_sh + 24..str_sh + 32].try_into().unwrap()) as usize;
-            dynstr_size = u64::from_le_bytes(data[str_sh + 32..str_sh + 40].try_into().unwrap()) as usize;
+            if str_sh + 40 > data.len() {
+                continue;
+            }
+            dynstr_off =
+                u64::from_le_bytes(data[str_sh + 24..str_sh + 32].try_into().unwrap()) as usize;
+            dynstr_size =
+                u64::from_le_bytes(data[str_sh + 32..str_sh + 40].try_into().unwrap()) as usize;
             break;
         }
     }
-    if dynsym_size == 0 {
+    if dynsym_size == 0 || dynstr_size == 0 {
         return Ok(None);
     }
 
     let count = dynsym_size / 24;
     for i in 0..count {
         let sym = dynsym_off + i * 24;
+        if sym + 24 > data.len() {
+            break;
+        }
         let st_name = u32::from_le_bytes(data[sym..sym + 4].try_into().unwrap()) as usize;
         let st_value = u64::from_le_bytes(data[sym + 8..sym + 16].try_into().unwrap());
         if st_name >= dynstr_size {
             continue;
         }
         let s = dynstr_off + st_name;
-        let end = data[s..dynstr_off + dynstr_size]
+        if s >= data.len() {
+            continue;
+        }
+        let end = data[s..(dynstr_off + dynstr_size).min(data.len())]
             .iter()
             .position(|b| *b == 0)
             .map(|p| s + p)
@@ -281,10 +323,13 @@ pub fn inject(pid: i32, so_path: &str) -> Result<()> {
 fn inject_inner(pid: i32, so_path: &str) -> Result<()> {
     let mut saved = UserRegs::default();
     get_regs(pid, &mut saved)?;
+    validate_saved(&saved)?;
 
     let remote_mem = remote_mmap(pid, &saved, 0x1000)?;
-    if remote_mem == 0 || remote_mem == u64::MAX {
-        bail!("remote mmap failed (returned {:x})", remote_mem);
+    // mmap failure comes back as an errno encoded as a negative long.
+    // `== u64::MAX` only catches -1; anything with the top bit set is a failure.
+    if remote_mem == 0 || (remote_mem as i64) < 0 {
+        bail!("remote mmap failed (returned {:#x})", remote_mem);
     }
 
     let mut buf = Vec::with_capacity(so_path.len() + 1);
