@@ -38,7 +38,7 @@ jobs:
       with:
         workspaces: |
           userspace/ksud
-          userspace/interceptor
+          userspace/ksud/interceptor
         cache-targets: false
 
     - uses: nttld/setup-ndk@v1
@@ -51,8 +51,8 @@ jobs:
         ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
       run: |
         source .github/scripts/setup-rust-build.sh ${{ inputs.target }} 26
-        # 根据实际情况修改 --manifest-path 的路径
-        cargo build --target "$TRIPLE" --release --manifest-path ./userspace/interceptor/Cargo.toml
+        # 编译 interceptor (注意这里的路径是 userspace/ksud/interceptor)
+        cargo build --target "$TRIPLE" --release --manifest-path ./userspace/ksud/interceptor/Cargo.toml
         
         # 将编译出的 .so 放入 ksud 的嵌入资源目录
         mkdir -p ./userspace/ksud/bin/aarch64/
