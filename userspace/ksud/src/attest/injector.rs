@@ -68,8 +68,9 @@ fn wait_stopped(pid: i32) -> Result<()> {
     }
     
     let sig = libc::WSTOPSIG(status);
-    // 允许 SIGTRAP (5) 和 SIGSTOP (19)
-    if sig != libc::SIGTRAP && sig != libc::SIGSTOP {
+    // 允许 SIGTRAP (5)、SIGSTOP (19) 和预期的 SIGSEGV (11)
+    // 因为目标函数的返回地址指向不可执行的栈，会触发 SIGSEGV，但函数其实已经执行成功了
+    if sig != libc::SIGTRAP && sig != libc::SIGSTOP && sig != libc::SIGSEGV {
         bail!("target stopped by unexpected signal: {}", sig);
     }
     Ok(())
@@ -138,7 +139,7 @@ fn remote_call(
 }
 
 fn remote_mmap(pid: i32, saved: &UserRegs, size: u64) -> Result<u64> {
-    // 修改点 1：使用公开的 mmap 符号
+    // 使用公开的 mmap 符号
     let mmap_fn = resolve_libc_symbol(pid, "mmap")?;
     let ret = remote_call(pid, saved, mmap_fn, [0, size, PROT_READ_WRITE, MAP_PRIVATE_ANON, u64::MAX, 0])?;
     if ret == u64::MAX {
@@ -309,7 +310,7 @@ fn inject_inner(pid: i32, so_path: &str) -> Result<()> {
     buf.push(0);
     write_remote(pid, remote_mem, &buf)?;
 
-    // 修改点 2：优先找 dlopen，找不到再找 __libc_dlopen_mode
+    // 优先找 dlopen，找不到再找 __libc_dlopen_mode
     let dlopen = resolve_libc_symbol(pid, "dlopen")
         .or_else(|_| resolve_libc_symbol(pid, "__libc_dlopen_mode"))?;
     
