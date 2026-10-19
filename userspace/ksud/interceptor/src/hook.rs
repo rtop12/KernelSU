@@ -1,46 +1,49 @@
-use retour::static_detour;
+use std::ffi::c_void;
+use std::sync::OnceLock;
 
-use crate::binder::resolve_transact;
+use crate::binder::{resolve_transact, TransactFn};
 
-// `static_detour!` must be expanded at module scope, not inside a function.
-retour::static_detour! {
-    static TRANSACT: unsafe extern "C" fn(
-        *mut libc::c_void, u32, *mut libc::c_void, *mut libc::c_void, u32
-    ) -> libc::c_int;
-}
+// 保存原始函数的指针，用于后续调用
+static mut ORIGINAL_TRANSACT: *mut c_void = std::ptr::null_mut();
 
 unsafe extern "C" fn transact_hook(
-    binder: *mut libc::c_void,
+    binder: *mut c_void,
     code: u32,
-    data: *mut libc::c_void,
-    reply: *mut libc::c_void,
+    data: *mut c_void,
+    reply: *mut c_void,
     flags: u32,
 ) -> libc::c_int {
-    // Phase 1: log *every* transact code. We need the full set to identify
-    // KeyMint's generateKey / getKeyEntry codes before writing the Phase 2
-    // parcel parser. Filtering by guessed codes loses data we cannot recover.
+    // Phase 1: 打印所有 Binder transaction 的 code
     crate::log::write(&format!("attest: transact code={code:#x}"));
 
-    // `TRANSACT.call` invokes the saved original. Calling `orig()` directly
-    // would recurse into the detour itself.
-    unsafe { TRANSACT.call(binder, code, data, reply, flags) }
+    // 调用原始函数
+    let orig: TransactFn = std::mem::transmute(ORIGINAL_TRANSACT);
+    if let Some(orig) = orig {
+        unsafe { orig(binder, code, data, reply, flags) }
+    } else {
+        -1 // 如果原始函数指针无效，返回错误
+    }
 }
 
 pub fn install() {
-    let Some(orig) = resolve_transact() else {
+    let Some(target) = resolve_transact() else {
         crate::log::write("attest: failed to resolve AIBinder_transact");
         return;
     };
 
+    let target_ptr = target as *mut c_void;
+    let replacement_ptr = transact_hook as *mut c_void;
+    let mut original_ptr: *mut c_void = std::ptr::null_mut();
+
+    // 使用 cydia-substrate-rs 的 AArch64 专用 Hook API
     unsafe {
-        if let Err(e) = TRANSACT.initialize(orig, transact_hook) {
-            crate::log::write(&format!("attest: detour initialize failed: {e:?}"));
-            return;
-        }
-        if let Err(e) = TRANSACT.enable() {
-            crate::log::write(&format!("attest: detour enable failed: {e:?}"));
-            return;
-        }
+        cydia_substrate_rs::A64HookFunction(target_ptr, replacement_ptr, &mut original_ptr);
+        ORIGINAL_TRANSACT = original_ptr;
     }
-    crate::log::write("attest: AIBinder_transact hook installed");
+
+    if ORIGINAL_TRANSACT.is_null() {
+        crate::log::write("attest: A64HookFunction failed, original pointer is null");
+    } else {
+        crate::log::write("attest: AIBinder_transact hook installed (cydia-substrate)");
+    }
 }
