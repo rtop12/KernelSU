@@ -4,8 +4,10 @@ pub mod injector;
 pub mod x509;
 
 use anyhow::{Context, Result};
-use log::{info, warn};
+use log::info;
+use std::path::Path;
 
+use crate::defs;
 use crate::feature_id::FeatureId;
 use crate::utils::ensure_binary;
 
@@ -27,8 +29,82 @@ fn is_enabled() -> bool {
 }
 
 pub fn install_interceptor_lib() -> Result<()> {
-    let data = crate::assets::get_asset_data("libinterceptor.so")
-        .context("libinterceptor.so is not embedded; build the interceptor crate and copy it to ksud/bin/aarch64/")?;
-    ensure_binary(crate::defs::ATTEST_LIB_PATH, &data, false)?;
+    let data = crate::assets::get_asset_data("libinterceptor.so").context(
+        "libinterceptor.so is not embedded; build the interceptor crate and copy it to ksud/bin/aarch64/",
+    )?;
+    ensure_binary(defs::ATTEST_LIB_PATH, &data, false)?;
+    Ok(())
+}
+
+// --- CLI helpers ---------------------------------------------------------
+// These are called from `cli.rs` under `Commands::Attest { .. }`.
+
+pub fn cli_status() -> Result<()> {
+    let enabled = is_enabled();
+    let pid = injector::find_pid_by_comm("keystore2");
+    let injected = pid.is_some_and(|p| injector::is_already_injected(p, "libinterceptor.so"));
+    let cfg = config::load()?;
+
+    println!("feature enabled: {enabled}");
+    println!("keystore2 pid:  {pid:?}");
+    println!(
+        "interceptor:    {}",
+        if injected { "injected" } else { "not injected" }
+    );
+    println!("targets:        {} entries", cfg.targets.len());
+    println!("keyboxes:       {} entries", cfg.keyboxes.len());
+    Ok(())
+}
+
+pub fn cli_list_targets() -> Result<()> {
+    let cfg = config::load()?;
+    if cfg.targets.is_empty() {
+        println!("(empty)");
+        return Ok(());
+    }
+    for t in cfg.targets {
+        println!("{:<50} {:?}", t.package, t.mode);
+    }
+    Ok(())
+}
+
+pub fn cli_set_targets(packages: &[String]) -> Result<()> {
+    config::ensure_default_configs()?;
+    std::fs::write(defs::ATTEST_TARGET_PATH, packages.join("\n"))?;
+    cli_reload()
+}
+
+pub fn cli_show_patch() -> Result<()> {
+    let cfg = config::load()?;
+    println!("system: {:?}", cfg.patch.system);
+    println!("vendor: {:?}", cfg.patch.vendor);
+    println!("boot:   {:?}", cfg.patch.boot);
+    Ok(())
+}
+
+pub fn cli_set_patch(value: &str) -> Result<()> {
+    config::ensure_default_configs()?;
+    std::fs::write(defs::ATTEST_SECURITY_PATCH_PATH, value)?;
+    cli_reload()
+}
+
+pub fn cli_reload() -> Result<()> {
+    // Phase 1: touch a marker file; Phase 2 will replace this with a
+    // broadcast message over `defs::ATTEST_SOCKET_PATH`.
+    let marker = Path::new(defs::ATTEST_DIR).join(".reload");
+    std::fs::write(marker, b"")?;
+    println!("reload requested");
+    Ok(())
+}
+
+pub fn cli_verify() -> Result<()> {
+    // Phase 1: parse_keybox() returns an empty Vec, so this only confirms
+    // the file exists and the XML is structurally acceptable.
+    let keyboxes = config::parse_keybox(Path::new(defs::ATTEST_KEYBOX_PATH))?;
+    if keyboxes.is_empty() {
+        println!("keybox: (empty, or parser not yet implemented)");
+    } else {
+        println!("keybox: {} entries", keyboxes.len());
+    }
     Ok(())
 }
