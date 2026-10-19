@@ -129,7 +129,10 @@ pub fn on_post_fs_data() -> Result<()> {
     }
 
     run_stage("post-mount", wait);
-
+    
+    if let Err(e) = crate::attest::ensure_started() {
+        warn!("attest: ensure_started failed: {e:#}");
+    }
     std::env::set_current_dir("/").with_context(|| "failed to chdir to /")?;
 
     Ok(())
