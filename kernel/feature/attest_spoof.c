@@ -1,5 +1,5 @@
 #include <linux/types.h>
-
+#include <linux/cache.h>
 #include "feature/attest_spoof.h"
 #include "policy/feature.h"
 #include "klog.h" // IWYU pragma: keep
