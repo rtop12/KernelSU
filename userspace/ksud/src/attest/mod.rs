@@ -115,3 +115,10 @@ pub fn cli_verify() -> Result<()> {
     }
     Ok(())
 }
+
+pub fn cli_inject(pid: i32) -> Result<()> {
+    println!("Manually injecting into pid: {}", pid);
+    injector::inject(pid, defs::ATTEST_LIB_PATH)?;
+    println!("Injection command sent successfully!");
+    Ok(())
+}
