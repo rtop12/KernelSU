@@ -67,9 +67,9 @@ fn wait_stopped(pid: i32) -> Result<()> {
         bail!("target did not stop: status=0x{status:x}");
     }
     
-    // 如果目标不是被断点(SIGTRAP)停下，而是被其他信号(比如 SIGSEGV)打断，说明执行出错了
     let sig = libc::WSTOPSIG(status);
-    if sig != libc::SIGTRAP {
+    // 允许 SIGTRAP (5) 和 SIGSTOP (19)
+    if sig != libc::SIGTRAP && sig != libc::SIGSTOP {
         bail!("target stopped by unexpected signal: {}", sig);
     }
     Ok(())
@@ -137,17 +137,12 @@ fn remote_call(
     Ok(out.regs[0])
 }
 
-// 修改为调用 __libc_mmap，不再手写 svc 汇编
 fn remote_mmap(pid: i32, saved: &UserRegs, size: u64) -> Result<u64> {
     let mmap_fn = resolve_libc_symbol(pid, "__libc_mmap")?;
-    
-    // __libc_mmap(addr=0, length=size, prot, flags, fd=-1, offset=0)
     let ret = remote_call(pid, saved, mmap_fn, [0, size, PROT_READ_WRITE, MAP_PRIVATE_ANON, u64::MAX, 0])?;
-    
     if ret == u64::MAX {
         bail!("remote __libc_mmap failed (returned -1)");
     }
-    
     Ok(ret)
 }
 
