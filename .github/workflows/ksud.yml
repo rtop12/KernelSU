@@ -51,12 +51,18 @@ jobs:
         ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
       run: |
         source .github/scripts/setup-rust-build.sh ${{ inputs.target }} 26
-        # 编译 interceptor
         cargo build --target "$TRIPLE" --release --manifest-path ./userspace/ksud/interceptor/Cargo.toml
-        
-        # 将编译出的 .so 放入 ksud 的嵌入资源目录
+
+    - name: Copy interceptor lib
+      run: |
         mkdir -p ./userspace/ksud/bin/aarch64/
-        cp target/${{ inputs.target }}/release/libinterceptor.so ./userspace/ksud/bin/aarch64/libinterceptor.so
+        SO_PATH=$(find target/${{ inputs.target }}/release -name "libinterceptor.so" -o -name "libinterceptor-*.so" | head -n 1)
+        if [ -z "$SO_PATH" ]; then
+          echo "ERROR: libinterceptor.so not found"
+          exit 1
+        fi
+        cp "$SO_PATH" ./userspace/ksud/bin/aarch64/libinterceptor.so
+        echo "Copied from $SO_PATH"
 
     - name: Build ksud
       env:
