@@ -1,9 +1,8 @@
 use std::ffi::c_void;
-use std::sync::OnceLock;
 
 use crate::binder::{resolve_transact, TransactFn};
 
-// 保存原始函数的指针，用于后续调用
+// 保存原始函数的指针，用于在 hook 函数中回调
 static mut ORIGINAL_TRANSACT: *mut c_void = std::ptr::null_mut();
 
 unsafe extern "C" fn transact_hook(
@@ -16,22 +15,18 @@ unsafe extern "C" fn transact_hook(
     // Phase 1: 打印所有 Binder transaction 的 code
     crate::log::write(&format!("attest: transact code={code:#x}"));
 
-    // 调用原始函数
-    let orig: TransactFn = std::mem::transmute(ORIGINAL_TRANSACT);
-    if let Some(orig) = orig {
-        unsafe { orig(binder, code, data, reply, flags) }
-    } else {
-        -1 // 如果原始函数指针无效，返回错误
-    }
+    // 将原始函数指针转换为函数类型并调用
+    let orig_fn: TransactFn = unsafe { std::mem::transmute(ORIGINAL_TRANSACT) };
+    unsafe { orig_fn(binder, code, data, reply, flags) }
 }
 
 pub fn install() {
-    let Some(target) = resolve_transact() else {
+    let Some(target_fn) = resolve_transact() else {
         crate::log::write("attest: failed to resolve AIBinder_transact");
         return;
     };
 
-    let target_ptr = target as *mut c_void;
+    let target_ptr = target_fn as *mut c_void;
     let replacement_ptr = transact_hook as *mut c_void;
     let mut original_ptr: *mut c_void = std::ptr::null_mut();
 
@@ -41,7 +36,7 @@ pub fn install() {
         ORIGINAL_TRANSACT = original_ptr;
     }
 
-    if ORIGINAL_TRANSACT.is_null() {
+    if original_ptr.is_null() {
         crate::log::write("attest: A64HookFunction failed, original pointer is null");
     } else {
         crate::log::write("attest: AIBinder_transact hook installed (cydia-substrate)");
