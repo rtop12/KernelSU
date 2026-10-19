@@ -138,10 +138,11 @@ fn remote_call(
 }
 
 fn remote_mmap(pid: i32, saved: &UserRegs, size: u64) -> Result<u64> {
-    let mmap_fn = resolve_libc_symbol(pid, "__libc_mmap")?;
+    // 修改点 1：使用公开的 mmap 符号
+    let mmap_fn = resolve_libc_symbol(pid, "mmap")?;
     let ret = remote_call(pid, saved, mmap_fn, [0, size, PROT_READ_WRITE, MAP_PRIVATE_ANON, u64::MAX, 0])?;
     if ret == u64::MAX {
-        bail!("remote __libc_mmap failed (returned -1)");
+        bail!("remote mmap failed (returned -1)");
     }
     Ok(ret)
 }
@@ -308,10 +309,13 @@ fn inject_inner(pid: i32, so_path: &str) -> Result<()> {
     buf.push(0);
     write_remote(pid, remote_mem, &buf)?;
 
-    let dlopen = resolve_libc_symbol(pid, "__libc_dlopen_mode")?;
+    // 修改点 2：优先找 dlopen，找不到再找 __libc_dlopen_mode
+    let dlopen = resolve_libc_symbol(pid, "dlopen")
+        .or_else(|_| resolve_libc_symbol(pid, "__libc_dlopen_mode"))?;
+    
     let ret = remote_call(pid, &saved, dlopen, [remote_mem, RTLD_NOW, 0, 0, 0, 0])?;
     if ret == 0 {
-        bail!("__libc_dlopen_mode returned NULL");
+        bail!("dlopen returned NULL");
     }
     log::info!("attest: injected {so_path} into pid {pid}, handle={ret:#x}");
     Ok(())
