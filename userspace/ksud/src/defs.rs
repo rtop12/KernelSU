@@ -3,6 +3,20 @@ mod android {
     use const_format::concatcp;
     use std::time::Duration;
 
+// --- attest spoof ---
+    pub const ATTEST_DIR: &str = concatcp!(WORKING_DIR, "attest/");
+    pub const ATTEST_KEYBOX_PATH: &str = concatcp!(ATTEST_DIR, "keybox.xml");
+    pub const ATTEST_TARGET_PATH: &str = concatcp!(ATTEST_DIR, "target.txt");
+    pub const ATTEST_SECURITY_PATCH_PATH: &str = concatcp!(ATTEST_DIR, "security_patch.txt");
+    pub const ATTEST_KEY_DB_DIR: &str = concatcp!(ATTEST_DIR, "key_db/");
+    pub const ATTEST_LIB_PATH: &str = concatcp!(ATTEST_DIR, "libinterceptor.so");
+    pub const ATTEST_SOCKET_PATH: &str = concatcp!(ATTEST_DIR, "control.sock");
+    pub const ATTEST_LOG_PATH: &str = concatcp!(LOG_DIR, "attest.log");
+    pub const ATTESTD_LOCK_PATH: &str = concatcp!(WORKING_DIR, "attestd.lock");
+
+
+
+    
     pub const BOOT_STAGE_TIMEOUT: Duration = Duration::from_secs(35);
     pub const EMULATED_SOFT_REBOOT_TIMEOUT: Duration = Duration::from_secs(5);
     pub const WAITSYS_READY_TIMEOUT: Duration = Duration::from_secs(2);
