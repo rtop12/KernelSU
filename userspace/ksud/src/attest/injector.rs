@@ -1,15 +1,15 @@
 use anyhow::{bail, Context, Result};
-use libc::c_uint;
+use libc::c_int;
 
-// ptrace request codes. libc declares ptrace() with `c_uint` for `request`
-// (see bionic/sys/ptrace.h), so the constants must match.
-const PTRACE_PEEKDATA: c_uint = 2;
-const PTRACE_POKEDATA: c_uint = 5;
-const PTRACE_GETREGS: c_uint = 12;
-const PTRACE_SETREGS: c_uint = 13;
-const PTRACE_ATTACH: c_uint = 16;
-const PTRACE_DETACH: c_uint = 17;
-const PTRACE_CONT: c_uint = 7;
+// ptrace request codes. Android's libc declares ptrace() with `c_int`
+// for `request`, so the constants must match.
+const PTRACE_PEEKDATA: c_int = 2;
+const PTRACE_POKEDATA: c_int = 5;
+const PTRACE_GETREGS: c_int = 12;
+const PTRACE_SETREGS: c_int = 13;
+const PTRACE_ATTACH: c_int = 16;
+const PTRACE_DETACH: c_int = 17;
+const PTRACE_CONT: c_int = 7;
 
 const RTLD_NOW: u64 = 2;
 const NR_MMAP: u64 = 222; // aarch64
@@ -27,7 +27,7 @@ struct UserRegs {
     pstate: u64,
 }
 
-fn ptrace_call(req: c_uint, pid: i32, addr: u64, data: u64) -> libc::c_long {
+fn ptrace_call(req: c_int, pid: i32, addr: u64, data: u64) -> libc::c_long {
     unsafe { libc::ptrace(req, pid, addr as *mut libc::c_void, data as *mut libc::c_void) }
 }
 
