@@ -39,16 +39,6 @@ enum Commands {
     #[command(hide = true)]
     Sulogd,
 
-    /// (internal) attestation spoof daemon
-    #[command(hide = true)]
-    Attestd,
-
-    /// Manage attestation spoofing (Tricky Store compatible)
-    Attest {
-        #[command(subcommand)]
-        command: Attest,
-    },
-
     /// Trigger `boot-complete` event
     BootCompleted,
 
@@ -163,52 +153,12 @@ enum Commands {
         #[command(subcommand)]
         command: Initrc,
     },
-
+    
     /// Set custom su alias path (default: /system/bin/su)
     SetSuAlias {
         /// The custom path, e.g., /system/bin/mysu (leave empty to reset to default)
         path: String,
     },
-}
-
-#[derive(clap::Subcommand, Debug)]
-enum Attest {
-    /// Start the attestation daemon and inject the interceptor into keystore2
-    Start,
-
-    /// Stop the attestation daemon and remove the interceptor (keystore2 restart is needed)
-    Stop,
-
-    /// Show attestation spoof status
-    Status,
-
-    /// List effective target packages and their modes
-    Targets,
-
-    /// Replace the target list with the given package names
-    SetTargets {
-        /// Package names. Suffix '?' forces leaf-hack, '!' forces generation.
-        packages: Vec<String>,
-    },
-
-    /// Show security patch override
-    Patch,
-
-    /// Set security patch override (single date applies to system/vendor/boot)
-    SetPatch {
-        /// e.g. 2024-11-01, or empty to clear
-        value: String,
-    },
-
-    /// Reload configuration on the running daemon
-    Reload,
-
-    /// Verify the injected interceptor and keybox loadability (Phase 2)
-    Verify,
-
-    /// Manually inject into a specific PID (for debugging)
-    #[command(hide = true)]
-    Inject { pid: i32 },
 }
 
 #[derive(clap::Subcommand, Debug)]
@@ -473,7 +423,7 @@ enum Profile {
 enum Feature {
     /// Get feature value and support status
     Get {
-        /// Feature ID or name (su_compat, kernel_umount, sulog, adb_root, selinux_hide, shell_su_adb_only, attest_spoof)
+        /// Feature ID or name (su_compat, kernel_umount, sulog, adb_root, selinux_hide, shell_su_adb_only)
         id: String,
         /// Read from config file
         #[arg(long, default_value_t = false)]
@@ -493,7 +443,7 @@ enum Feature {
 
     /// Check feature status (supported/unsupported/managed/forced)
     Check {
-        /// Feature ID or name (su_compat, kernel_umount, sulog, adb_root, selinux_hide, shell_su_adb_only, attest_spoof)
+        /// Feature ID or name (su_compat, kernel_umount, sulog, adb_root, selinux_hide, shell_su_adb_only)
         id: String,
     },
 
@@ -597,11 +547,11 @@ pub fn run() -> Result<()> {
         Commands::SoftReboot => crate::soft_reboot::soft_reboot(),
 
         Commands::Insmod { module, params } => debug::insmod(&module, &params),
-
+        
         Commands::SetSuAlias { path } => {
             let sysfs_path = "/sys/module/kernelsu/parameters/custom_su_path";
             let default_path = "/system/bin/su";
-
+            
             if path.is_empty() || path == default_path {
                 let _ = std::fs::remove_file(defs::SU_ALIAS_PATH);
                 std::fs::write(sysfs_path, default_path)?;
@@ -637,6 +587,7 @@ pub fn run() -> Result<()> {
 
                     match command {
                         ModuleConfigCmd::Get { key } => {
+                            // Use merge_configs to respect priority (temp overrides persist)
                             let config = module_config::merge_configs(&module_id)?;
                             match config.get(&key) {
                                 Some(value) => {
@@ -652,11 +603,14 @@ pub fn run() -> Result<()> {
                             stdin,
                             temp,
                         } => {
+                            // Validate key at CLI layer for better user experience
                             module_config::validate_config_key(&key)?;
 
+                            // Read value from stdin or argument
                             let value_str = match value {
                                 Some(v) if !stdin => v,
                                 _ => {
+                                    // Read from stdin
                                     use std::io::Read;
                                     let mut buffer = String::new();
                                     std::io::stdin()
@@ -666,6 +620,7 @@ pub fn run() -> Result<()> {
                                 }
                             };
 
+                            // Validate value
                             module_config::validate_config_value(&value_str)?;
 
                             let config_type = if temp {
@@ -753,27 +708,6 @@ pub fn run() -> Result<()> {
             Ok(())
         }
         Commands::Sulogd => sulog::run_sulogd(),
-        Commands::Attestd => crate::attest::daemon::run_daemon(),
-
-        Commands::Attest { command } => match command {
-            Attest::Start => crate::attest::ensure_started(),
-            Attest::Stop => {
-                // Best-effort: kill attestd; interceptor is removed when keystore2 restarts.
-                let _ = std::process::Command::new("pkill")
-                    .args(["-f", "ksud attestd"])
-                    .status();
-                Ok(())
-            }
-            Attest::Status => crate::attest::cli_status(),
-            Attest::Targets => crate::attest::cli_list_targets(),
-            Attest::SetTargets { packages } => crate::attest::cli_set_targets(&packages),
-            Attest::Patch => crate::attest::cli_show_patch(),
-            Attest::SetPatch { value } => crate::attest::cli_set_patch(&value),
-            Attest::Reload => crate::attest::cli_reload(),
-            Attest::Verify => crate::attest::cli_verify(),
-            Attest::Inject { pid } => crate::attest::cli_inject(pid),
-        },
-
         Commands::Profile { command } => match command {
             Profile::GetSepolicy { package } => crate::profile::get_sepolicy(package),
             Profile::SetSepolicy { package, policy } => {
@@ -858,6 +792,7 @@ pub fn run() -> Result<()> {
             BootInfo::CurrentKmi => {
                 let kmi = crate::boot_patch::get_current_kmi()?;
                 println!("{kmi}");
+                // return here to avoid printing the error message
                 return Ok(());
             }
             BootInfo::SupportedKmis => {

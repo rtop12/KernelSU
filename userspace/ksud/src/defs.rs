@@ -25,7 +25,7 @@ mod android {
     pub const LIBADBROOT_PATH: &str = concatcp!(LIBRARY_DIR, "libadbroot.so");
 
     pub const DAEMON_LINK_PATH: &str = concatcp!(BINARY_DIR, "kitsune");
-
+    
     pub const SU_ALIAS_PATH: &str = concatcp!(WORKING_DIR, ".su_alias");
 
     pub const MODULE_DIR: &str = concatcp!(ADB_DIR, "modules/");
@@ -56,20 +56,6 @@ mod android {
     pub const KSU_BACKUP_FILE_PREFIX: &str = "ksu_backup_";
     pub const BACKUP_FILENAME: &str = "stock_image.sha1";
     pub const KSU_TEMP_BACKUP_DIR_NAME: &str = "boot_backup";
-
-    // --- attest spoof ---
-    // Placed after its dependencies (WORKING_DIR, LOG_DIR) for readability.
-    // Rust does allow forward references in `const`, but `concatcp!` chains are
-    // easier to reason about when the order matches the dependency order.
-    pub const ATTEST_DIR: &str = concatcp!(WORKING_DIR, "attest/");
-    pub const ATTEST_KEYBOX_PATH: &str = concatcp!(ATTEST_DIR, "keybox.xml");
-    pub const ATTEST_TARGET_PATH: &str = concatcp!(ATTEST_DIR, "target.txt");
-    pub const ATTEST_SECURITY_PATCH_PATH: &str = concatcp!(ATTEST_DIR, "security_patch.txt");
-    pub const ATTEST_KEY_DB_DIR: &str = concatcp!(ATTEST_DIR, "key_db/");
-    pub const ATTEST_LIB_PATH: &str = concatcp!(ATTEST_DIR, "libinterceptor.so");
-    pub const ATTEST_SOCKET_PATH: &str = concatcp!(ATTEST_DIR, "control.sock");
-    pub const ATTEST_LOG_PATH: &str = concatcp!(LOG_DIR, "attest.log");
-    pub const ATTESTD_LOCK_PATH: &str = concatcp!(WORKING_DIR, "attestd.lock");
 
     pub const DEFAULT_PACKAGE_NAME: &str = env!("KSU_PACKAGE_NAME");
 }
