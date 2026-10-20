@@ -30,36 +30,36 @@ struct IoVec {
     iov_len: usize,
 }
 
-fn ptrace_call(req: c_int, pid: i32, addr: u64, data: u64) -> libc::c_long {
-    unsafe { libc::ptrace(req, pid, addr as *mut c_void, data as *mut c_void) }
+fn ptrace_call(req: c_int, tid: i32, addr: u64, data: u64) -> libc::c_long {
+    unsafe { libc::ptrace(req, tid, addr as *mut c_void, data as *mut c_void) }
 }
 
-fn get_regs(pid: i32, regs: &mut UserRegs) -> Result<()> {
+fn get_regs(tid: i32, regs: &mut UserRegs) -> Result<()> {
     let mut iov = IoVec {
         iov_base: regs as *mut _ as *mut c_void,
         iov_len: std::mem::size_of::<UserRegs>(),
     };
-    if ptrace_call(PTRACE_GETREGSET, pid, NT_PRSTATUS, &mut iov as *mut _ as u64) < 0 {
+    if ptrace_call(PTRACE_GETREGSET, tid, NT_PRSTATUS, &mut iov as *mut _ as u64) < 0 {
         bail!("PTRACE_GETREGSET: {}", std::io::Error::last_os_error());
     }
     Ok(())
 }
 
-fn set_regs(pid: i32, regs: &UserRegs) -> Result<()> {
+fn set_regs(tid: i32, regs: &UserRegs) -> Result<()> {
     let mut iov = IoVec {
         iov_base: regs as *const _ as *mut c_void,
         iov_len: std::mem::size_of::<UserRegs>(),
     };
-    if ptrace_call(PTRACE_SETREGSET, pid, NT_PRSTATUS, &mut iov as *mut _ as u64) < 0 {
+    if ptrace_call(PTRACE_SETREGSET, tid, NT_PRSTATUS, &mut iov as *mut _ as u64) < 0 {
         bail!("PTRACE_SETREGSET: {}", std::io::Error::last_os_error());
     }
     Ok(())
 }
 
-fn wait_stopped(pid: i32, expected_sig: Option<i32>) -> Result<()> {
+fn wait_stopped(tid: i32, expected_sig: Option<i32>) -> Result<()> {
     let mut status = 0;
     unsafe {
-        if libc::waitpid(pid, &mut status, 0) < 0 {
+        if libc::waitpid(tid, &mut status, 0) < 0 {
             bail!("waitpid: {}", std::io::Error::last_os_error());
         }
     }
@@ -75,8 +75,8 @@ fn wait_stopped(pid: i32, expected_sig: Option<i32>) -> Result<()> {
     Ok(())
 }
 
-fn poke_data(pid: i32, addr: u64, data: u64) -> Result<()> {
-    if ptrace_call(PTRACE_POKEDATA, pid, addr, data) < 0 {
+fn poke_data(tid: i32, addr: u64, data: u64) -> Result<()> {
+    if ptrace_call(PTRACE_POKEDATA, tid, addr, data) < 0 {
         bail!(
             "PTRACE_POKEDATA @ {:x}: {}",
             addr,
@@ -86,13 +86,13 @@ fn poke_data(pid: i32, addr: u64, data: u64) -> Result<()> {
     Ok(())
 }
 
-fn write_remote(pid: i32, dst: u64, bytes: &[u8]) -> Result<()> {
+fn write_remote(tid: i32, dst: u64, bytes: &[u8]) -> Result<()> {
     let mut i = 0;
     while i < bytes.len() {
         let mut word = [0u8; 8];
         let take = (bytes.len() - i).min(8);
         word[..take].copy_from_slice(&bytes[i..i + take]);
-        poke_data(pid, dst + i as u64, u64::from_le_bytes(word))?;
+        poke_data(tid, dst + i as u64, u64::from_le_bytes(word))?;
         i += 8;
     }
     Ok(())
@@ -105,19 +105,13 @@ fn resolve_so_base(pid: i32, soname: &str) -> Result<(u64, String)> {
     let mut fallback: Option<(u64, String)> = None;
     for line in maps.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 6 {
-            continue;
-        }
+        if parts.len() < 6 { continue; }
         let path = parts[5];
-        if !path.contains(soname) {
-            continue;
-        }
+        if !path.contains(soname) { continue; }
         let range = parts[0];
         let start = u64::from_str_radix(range.split('-').next().unwrap_or("0"), 16).unwrap_or(0);
         let file_offset = u64::from_str_radix(parts[2], 16).unwrap_or(u64::MAX);
-        if start == 0 || file_offset == u64::MAX {
-            continue;
-        }
+        if start == 0 || file_offset == u64::MAX { continue; }
         let base = start.saturating_sub(file_offset);
         if parts[1].contains('x') {
             return Ok((base, path.to_string()));
@@ -132,8 +126,7 @@ fn resolve_so_base(pid: i32, soname: &str) -> Result<(u64, String)> {
 fn resolve_libc_symbol(pid: i32, name: &str) -> Result<u64> {
     let (base, path) = resolve_so_base(pid, "libc.so")?;
     let data = std::fs::read(&path).with_context(|| format!("read {path}"))?;
-    let value =
-        elf_dynsym_value(&data, name)?.with_context(|| format!("{name} not found in {path}"))?;
+    let value = elf_dynsym_value(&data, name)?.with_context(|| format!("{name} not found in {path}"))?;
     Ok(base + value)
 }
 
@@ -152,53 +145,37 @@ fn elf_dynsym_value(data: &[u8], name: &str) -> Result<Option<u64>> {
 
     for i in 0..shnum {
         let sh = shoff + i * shentsize;
-        if sh + 64 > data.len() {
-            break;
-        }
+        if sh + 64 > data.len() { break; }
         let sh_type = u32::from_le_bytes(data[sh + 4..sh + 8].try_into().unwrap());
         if sh_type == 11 {
             dynsym_off = u64::from_le_bytes(data[sh + 24..sh + 32].try_into().unwrap()) as usize;
             dynsym_size = u64::from_le_bytes(data[sh + 32..sh + 40].try_into().unwrap()) as usize;
             let link = u32::from_le_bytes(data[sh + 40..sh + 44].try_into().unwrap()) as usize;
             let str_sh = shoff + link * shentsize;
-            if str_sh + 40 > data.len() {
-                continue;
-            }
-            dynstr_off =
-                u64::from_le_bytes(data[str_sh + 24..str_sh + 32].try_into().unwrap()) as usize;
-            dynstr_size =
-                u64::from_le_bytes(data[str_sh + 32..str_sh + 40].try_into().unwrap()) as usize;
+            if str_sh + 40 > data.len() { continue; }
+            dynstr_off = u64::from_le_bytes(data[str_sh + 24..str_sh + 32].try_into().unwrap()) as usize;
+            dynstr_size = u64::from_le_bytes(data[str_sh + 32..str_sh + 40].try_into().unwrap()) as usize;
             break;
         }
     }
-    if dynsym_size == 0 || dynstr_size == 0 {
-        return Ok(None);
-    }
+    if dynsym_size == 0 || dynstr_size == 0 { return Ok(None); }
 
     let count = dynsym_size / 24;
     for i in 0..count {
         let sym = dynsym_off + i * 24;
-        if sym + 24 > data.len() {
-            break;
-        }
+        if sym + 24 > data.len() { break; }
         let st_name = u32::from_le_bytes(data[sym..sym + 4].try_into().unwrap()) as usize;
         let st_value = u64::from_le_bytes(data[sym + 8..sym + 16].try_into().unwrap());
-        if st_name >= dynstr_size {
-            continue;
-        }
+        if st_name >= dynstr_size { continue; }
         let s = dynstr_off + st_name;
-        if s >= data.len() {
-            continue;
-        }
+        if s >= data.len() { continue; }
         let end = data[s..(dynstr_off + dynstr_size).min(data.len())]
             .iter()
             .position(|b| *b == 0)
             .map(|p| s + p)
             .unwrap_or(s);
         let sym_name = std::str::from_utf8(&data[s..end]).unwrap_or("");
-        if sym_name == name {
-            return Ok(Some(st_value));
-        }
+        if sym_name == name { return Ok(Some(st_value)); }
     }
     Ok(None)
 }
@@ -209,17 +186,13 @@ pub fn find_pid_by_comm(comm: &str) -> Option<i32> {
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(pid_str) = name.to_str() else { continue };
-        let Ok(pid) = pid_str.parse::<i32>() else {
-            continue;
-        };
+        let Ok(pid) = pid_str.parse::<i32>() else { continue };
 
         if let Ok(cmdline) = std::fs::read(format!("/proc/{pid}/cmdline")) {
             if let Some(first) = cmdline.split(|&b| b == 0).next() {
                 if let Ok(s) = std::str::from_utf8(first) {
                     if let Some(base) = Path::new(s).file_name().and_then(|n| n.to_str()) {
-                        if base == comm {
-                            return Some(pid);
-                        }
+                        if base == comm { return Some(pid); }
                     }
                 }
             }
@@ -227,9 +200,7 @@ pub fn find_pid_by_comm(comm: &str) -> Option<i32> {
 
         if comm_fallback.is_none() {
             if let Ok(c) = std::fs::read_to_string(format!("/proc/{pid}/comm")) {
-                if c.trim() == comm {
-                    comm_fallback = Some(pid);
-                }
+                if c.trim() == comm { comm_fallback = Some(pid); }
             }
         }
     }
@@ -242,29 +213,47 @@ pub fn is_already_injected(pid: i32, so_name: &str) -> bool {
         .unwrap_or(false)
 }
 
+// 【修复核心1】：寻找空闲线程并注入，避免卡死主线程
 pub fn inject(pid: i32, so_path: &str) -> Result<()> {
+    let task_dir = format!("/proc/{pid}/task");
+    let mut target_tid = None;
+    
+    if let Ok(entries) = std::fs::read_dir(&task_dir) {
+        for entry in entries.flatten() {
+            if let Ok(tid) = entry.file_name().to_string_lossy().parse::<i32>() {
+                if tid == pid { continue; }
+                if let Ok(status) = std::fs::read_to_string(format!("{}/{}/status", task_dir, tid)) {
+                    if status.contains("State:\tS") {
+                        target_tid = Some(tid);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    let target_tid = target_tid.unwrap_or(pid);
+
     unsafe {
-        if libc::ptrace(PTRACE_ATTACH, pid, 0, 0) < 0 {
+        if libc::ptrace(PTRACE_ATTACH, target_tid, 0, 0) < 0 {
             bail!("PTRACE_ATTACH: {}", std::io::Error::last_os_error());
         }
     }
-    wait_stopped(pid, Some(libc::SIGSTOP)).context("wait after attach")?;
+    wait_stopped(target_tid, Some(libc::SIGSTOP)).context("wait after attach")?;
 
-    let result = inject_inner(pid, so_path);
+    let result = inject_inner(target_tid, so_path);
 
     unsafe {
-        libc::ptrace(PTRACE_DETACH, pid, 0, 0);
+        libc::ptrace(PTRACE_DETACH, target_tid, 0, 0);
     }
     result
 }
 
-fn inject_inner(pid: i32, so_path: &str) -> Result<()> {
+fn inject_inner(tid: i32, so_path: &str) -> Result<()> {
     let mut saved = UserRegs::default();
-    get_regs(pid, &mut saved)?;
+    get_regs(tid, &mut saved)?;
 
-    let mmap_fn = resolve_libc_symbol(pid, "mmap")?;
-    
-    // 1. mmap 申请 16KB
+    let mmap_fn = resolve_libc_symbol(tid, "mmap")?;
     let mut regs = saved;
     regs.regs[0] = 0;
     regs.regs[1] = 0x4000; 
@@ -273,54 +262,52 @@ fn inject_inner(pid: i32, so_path: &str) -> Result<()> {
     regs.regs[4] = u64::MAX;
     regs.regs[5] = 0;
     regs.regs[29] = 0;
-    regs.regs[30] = 0; // lr = 0 触发 SIGSEGV
+    regs.regs[30] = 0; // lr = 0
     regs.pc = mmap_fn;
 
-    set_regs(pid, &regs)?;
-    ptrace_call(PTRACE_CONT, pid, 0, 0);
-    wait_stopped(pid, Some(libc::SIGSEGV))?;
+    set_regs(tid, &regs)?;
+    ptrace_call(PTRACE_CONT, tid, 0, 0);
+    wait_stopped(tid, Some(libc::SIGSEGV))?;
 
     let mut out = UserRegs::default();
-    get_regs(pid, &mut out)?;
+    get_regs(tid, &mut out)?;
     let remote_mem = out.regs[0];
     if (remote_mem as i64) <= 0 {
         bail!("mmap failed with {:#x}", remote_mem);
     }
 
-    // 2. 写入字符串
     let mut buf = Vec::with_capacity(so_path.len() + 1);
     buf.extend_from_slice(so_path.as_bytes());
     buf.push(0);
-    write_remote(pid, remote_mem, &buf)?;
+    write_remote(tid, remote_mem, &buf)?;
 
-    // 3. 写入 Shellcode (brk #0)
+    // 【修复核心2】：写入 brk #0，精确判断 dlopen 是否执行完毕
     let brk_insn: u32 = 0xd4200000;
-    write_remote(pid, remote_mem + 0x100, &brk_insn.to_le_bytes())?;
+    write_remote(tid, remote_mem + 0x100, &brk_insn.to_le_bytes())?;
 
-    // 4. 调用 dlopen
-    let dlopen_fn = resolve_libc_symbol(pid, "dlopen")
-        .or_else(|_| resolve_libc_symbol(pid, "__libc_dlopen_mode"))?;
+    let dlopen_fn = resolve_libc_symbol(tid, "dlopen")
+        .or_else(|_| resolve_libc_symbol(tid, "__libc_dlopen_mode"))?;
     let mut regs = saved;
     regs.regs[0] = remote_mem;
     regs.regs[1] = RTLD_NOW;
     regs.regs[29] = 0; 
-    regs.regs[30] = remote_mem + 0x100; // 【关键】返回地址指向 brk
+    regs.regs[30] = remote_mem + 0x100; // lr 指向 brk
     regs.pc = dlopen_fn;
-    regs.sp = (remote_mem + 0x4000) & !0xF; // 使用安全栈
+    regs.sp = (remote_mem + 0x4000) & !0xF; // 安全栈
 
-    set_regs(pid, &regs)?;
-    ptrace_call(PTRACE_CONT, pid, 0, 0);
-    // 【关键】期望捕获 SIGTRAP (5)，如果捕获到 SIGSEGV (11) 说明 dlopen 内部崩了
-    wait_stopped(pid, Some(libc::SIGTRAP)).context("wait after dlopen")?;
+    set_regs(tid, &regs)?;
+    ptrace_call(PTRACE_CONT, tid, 0, 0);
+    
+    // 期望捕获 SIGTRAP (5)，如果是 SIGSEGV (11) 说明库内部崩溃了
+    wait_stopped(tid, Some(libc::SIGTRAP)).context("wait after dlopen")?;
 
-    get_regs(pid, &mut out)?;
+    get_regs(tid, &mut out)?;
     let handle = out.regs[0];
-
-    set_regs(pid, &saved)?;
+    set_regs(tid, &saved)?;
 
     if handle == 0 {
-        bail!("dlopen returned NULL (check dependencies or SELinux)");
+        bail!("dlopen returned NULL (check dependencies)");
     }
-    log::info!("attest: injected {so_path} into pid {pid}, handle={handle:#x}");
+    log::info!("attest: injected {so_path} into tid {tid}, handle={handle:#x}");
     Ok(())
 }
