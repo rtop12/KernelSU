@@ -3,6 +3,8 @@ name = "ksud"
 version = "0.1.0"
 edition.workspace = true
 
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
 [dependencies]
 anyhow.workspace = true
 clap = { version = "4", features = ["derive"] }
@@ -55,15 +57,10 @@ ksuinit = { path = "../ksuinit" }
 adb_client = { git = "https://github.com/KernelSU2/adb_client" }
 prop-rs-android = { git = "https://github.com/KernelSU2/ksu_props", rev = "ddb6ee7294467f7f25bad2118e9e24eee104144b" }
 
-# --- attest spoof (Phase 2 用，Phase 1 只 import 不用) ---
-x509-parser = "0.16"
-pem = "3"
-quick-xml = "0.36"
-rand = "0.8"
-
 [build-dependencies]
 bindgen = "0.73"
 
+# 新增加的体积优化配置
 [profile.release]
 opt-level = "z"
 lto = true
