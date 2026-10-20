@@ -18,7 +18,6 @@ static const char *const feature_names[KSU_FEATURE_MAX] = {
     [KSU_FEATURE_ADB_ROOT] = "adb_root",
     [KSU_FEATURE_SELINUX_HIDE] = "selinux_hide",
     [KSU_FEATURE_SHELL_SU_ADB_ONLY] = "shell_su_adb_only",
-    [KSU_FEATURE_ATTEST_SPOOF] = "attest_spoof",
 };
 
 // Features forced by boot config. Written only while parsing module params
