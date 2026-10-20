@@ -56,7 +56,9 @@ fn set_regs(pid: i32, regs: &UserRegs) -> Result<()> {
     Ok(())
 }
 
-fn wait_stopped(pid: i32) -> Result<()> {
+/// 等待进程停止，并校验停止信号是否与预期一致。
+/// 传入 `None` 表示不校验信号。
+fn wait_stopped(pid: i32, expected_sig: Option<i32>) -> Result<()> {
     let mut status = 0;
     unsafe {
         if libc::waitpid(pid, &mut status, 0) < 0 {
@@ -65,6 +67,12 @@ fn wait_stopped(pid: i32) -> Result<()> {
     }
     if !libc::WIFSTOPPED(status) {
         bail!("target did not stop: status=0x{status:x}");
+    }
+    if let Some(expected) = expected_sig {
+        let sig = libc::WSTOPSIG(status);
+        if sig != expected {
+            bail!("target stopped by signal {} instead of {}", sig, expected);
+        }
     }
     Ok(())
 }
@@ -163,8 +171,10 @@ fn elf_dynsym_value(data: &[u8], name: &str) -> Result<Option<u64>> {
             if str_sh + 40 > data.len() {
                 continue;
             }
-            dynstr_off = u64::from_le_bytes(data[str_sh + 24..str_sh + 32].try_into().unwrap()) as usize;
-            dynstr_size = u64::from_le_bytes(data[str_sh + 32..str_sh + 40].try_into().unwrap()) as usize;
+            dynstr_off =
+                u64::from_le_bytes(data[str_sh + 24..str_sh + 32].try_into().unwrap()) as usize;
+            dynstr_size =
+                u64::from_le_bytes(data[str_sh + 32..str_sh + 40].try_into().unwrap()) as usize;
             break;
         }
     }
@@ -201,17 +211,15 @@ fn elf_dynsym_value(data: &[u8], name: &str) -> Result<Option<u64>> {
 }
 
 /// 按进程名查找 pid。
-///
-/// 注意：某些进程（如 keystore2）启动后会把主线程 comm 改成 `binder:<pid>_<n>`，
-/// 这时 `/proc/<pid>/comm` 不再是 `keystore2`，但 `/proc/<pid>/cmdline` 的 basename 依然是。
-/// 所以这里采用 cmdline basename 优先、comm 兜底的策略，与 toybox `pidof` 的行为一致。
 pub fn find_pid_by_comm(comm: &str) -> Option<i32> {
     let entries = std::fs::read_dir("/proc").ok()?;
     let mut comm_fallback: Option<i32> = None;
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(pid_str) = name.to_str() else { continue };
-        let Ok(pid) = pid_str.parse::<i32>() else { continue };
+        let Ok(pid) = pid_str.parse::<i32>() else {
+            continue;
+        };
 
         // 1) cmdline basename 匹配
         if let Ok(cmdline) = std::fs::read(format!("/proc/{pid}/cmdline")) {
@@ -226,7 +234,7 @@ pub fn find_pid_by_comm(comm: &str) -> Option<i32> {
             }
         }
 
-        // 2) comm 兜底（记录第一个命中的，避免每次都重读）
+        // 2) comm 兜底
         if comm_fallback.is_none() {
             if let Ok(c) = std::fs::read_to_string(format!("/proc/{pid}/comm")) {
                 if c.trim() == comm {
@@ -239,9 +247,6 @@ pub fn find_pid_by_comm(comm: &str) -> Option<i32> {
 }
 
 /// 目标进程是否已经加载了指定的 so。
-///
-/// 用 `/proc/<pid>/maps` 的路径字段（第 6 列）做 `ends_with` 匹配，
-/// 避免 `contains` 因子串包含导致的误判。
 pub fn is_already_injected(pid: i32, so_name: &str) -> bool {
     std::fs::read_to_string(format!("/proc/{pid}/maps"))
         .map(|s| {
@@ -260,7 +265,8 @@ pub fn inject(pid: i32, so_path: &str) -> Result<()> {
             bail!("PTRACE_ATTACH: {}", std::io::Error::last_os_error());
         }
     }
-    wait_stopped(pid).context("wait after attach")?;
+    // PTRACE_ATTACH 会让目标进程停下并发送 SIGSTOP
+    wait_stopped(pid, Some(libc::SIGSTOP)).context("wait after attach")?;
 
     let result = inject_inner(pid, so_path);
 
@@ -274,23 +280,22 @@ fn inject_inner(pid: i32, so_path: &str) -> Result<()> {
     let mut saved = UserRegs::default();
     get_regs(pid, &mut saved)?;
 
-    // 申请内存
+    // 1. 申请内存：申请 16KB，前 4KB 用于存放字符串，剩余的作为 dlopen 的安全栈
     let mmap_fn = resolve_libc_symbol(pid, "mmap")?;
-
-    // 准备调用 mmap，lr 设为 0，执行完后会停在不可执行地址触发 SIGSEGV
     let mut regs = saved;
     regs.regs[0] = 0;
-    regs.regs[1] = 0x1000;
+    regs.regs[1] = 0x4000; // 16KB
     regs.regs[2] = PROT_READ_WRITE;
     regs.regs[3] = MAP_PRIVATE_ANON;
     regs.regs[4] = u64::MAX;
     regs.regs[5] = 0;
-    regs.regs[30] = 0; // lr = 0
+    regs.regs[29] = 0; // x29 = 0
+    regs.regs[30] = 0; // lr = 0 触发 SIGSEGV
     regs.pc = mmap_fn;
 
     set_regs(pid, &regs)?;
     ptrace_call(PTRACE_CONT, pid, 0, 0);
-    wait_stopped(pid)?;
+    wait_stopped(pid, Some(libc::SIGSEGV))?; // 确保是我们故意触发的段错误
 
     let mut out = UserRegs::default();
     get_regs(pid, &mut out)?;
@@ -299,24 +304,28 @@ fn inject_inner(pid: i32, so_path: &str) -> Result<()> {
         bail!("mmap failed with {:#x}", remote_mem);
     }
 
-    // 写路径
+    // 2. 写入 so 路径
     let mut buf = Vec::with_capacity(so_path.len() + 1);
     buf.extend_from_slice(so_path.as_bytes());
     buf.push(0);
     write_remote(pid, remote_mem, &buf)?;
 
-    // 调用 dlopen
+    // 3. 调用 dlopen
     let dlopen_fn = resolve_libc_symbol(pid, "dlopen")
         .or_else(|_| resolve_libc_symbol(pid, "__libc_dlopen_mode"))?;
     let mut regs = saved;
     regs.regs[0] = remote_mem;
     regs.regs[1] = RTLD_NOW;
-    regs.regs[30] = 0; // 再次设 lr 为 0
+    regs.regs[29] = 0; // x29 = 0
+    regs.regs[30] = 0; // lr = 0 触发 SIGSEGV
     regs.pc = dlopen_fn;
+    // 【关键修复】把 sp 指向我们刚刚申请的 mmap 内存尾部，且 16 字节对齐。
+    // 避免破坏目标原线程的栈。
+    regs.sp = (remote_mem + 0x4000) & !0xF;
 
     set_regs(pid, &regs)?;
     ptrace_call(PTRACE_CONT, pid, 0, 0);
-    wait_stopped(pid)?;
+    wait_stopped(pid, Some(libc::SIGSEGV))?; // 确保执行完 dlopen 后跳入非法地址
 
     get_regs(pid, &mut out)?;
     let handle = out.regs[0];
