@@ -8,7 +8,6 @@ use std::io;
 use std::os::fd::RawFd;
 use std::sync::OnceLock;
 
-// sigsys handler
 std::thread_local! {
     #[allow(clippy::missing_const_for_thread_local)]
     static SVC_IN_FLIGHT: Cell<bool> = const { Cell::new(false) };
@@ -81,7 +80,6 @@ pub fn setup_sigsys_handler() {
 const DRIVER_FD_NAME: &str = "anon_inode:[ksu_driver]";
 const SU_DRIVER_FD_NAME: &str = "anon_inode:[ksu_driver_su]";
 
-// Global driver fd cache
 static DRIVER_FD: OnceLock<RawFd> = OnceLock::new();
 static INFO_CACHE: OnceLock<ksu_uapi::ksu_get_info_cmd> = OnceLock::new();
 
@@ -116,7 +114,6 @@ pub fn claim_inherited_driver_fd() -> io::Result<()> {
     Ok(())
 }
 
-// Get cached driver fd
 fn init_driver_fd() -> Option<RawFd> {
     let fd = scan_driver_fd().ok().flatten();
     if fd.is_none() {
@@ -140,7 +137,6 @@ fn init_driver_fd() -> Option<RawFd> {
     }
 }
 
-// ioctl wrapper using libc
 fn ksuctl<T>(request: u32, arg: *mut T) -> Result<i32> {
     use std::io;
 
@@ -157,7 +153,6 @@ fn ksuctl<T>(request: u32, arg: *mut T) -> Result<i32> {
     }
 }
 
-// API implementations
 pub fn get_info() -> ksu_uapi::ksu_get_info_cmd {
     *INFO_CACHE.get_or_init(|| {
         let mut cmd = ksu_uapi::ksu_get_info_cmd {
@@ -254,15 +249,22 @@ pub fn set_sepolicy(payload: *const u8, payload_len: u64) -> Result<i32> {
     ksuctl(ksu_uapi::KSU_IOCTL_SET_SEPOLICY, &raw mut ioctl_cmd)
 }
 
+pub fn set_su_path(path: &str) -> anyhow::Result<()> {
+    let c_path = std::ffi::CString::new(path)?;
+    let mut cmd = ksu_uapi::ksu_set_su_path_cmd {
+        path: c_path.as_ptr() as u64,
+    };
+    ksuctl(ksu_uapi::KSU_IOCTL_SET_SU_PATH, &raw mut cmd)?;
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct FeatureState {
     pub value: u64,
     pub supported: bool,
-    /// Forced by boot config (ksu_config), the kernel refuses to change it
     pub forced: bool,
 }
 
-/// Get feature value and support status from kernel
 pub fn get_feature(feature_id: u32) -> Result<FeatureState> {
     let mut cmd = ksu_uapi::ksu_get_feature_cmd {
         feature_id,
@@ -273,13 +275,11 @@ pub fn get_feature(feature_id: u32) -> Result<FeatureState> {
     let flags = u32::from(cmd.supported);
     Ok(FeatureState {
         value: cmd.value,
-        // older kernels report 1 for supported, matching the flag
         supported: flags & ksu_uapi::KSU_FEATURE_FLAG_SUPPORTED != 0,
         forced: flags & ksu_uapi::KSU_FEATURE_FLAG_FORCED != 0,
     })
 }
 
-/// Set feature value in kernel
 pub fn set_feature(feature_id: u32, value: u64) -> Result<()> {
     let mut cmd = ksu_uapi::ksu_set_feature_cmd { feature_id, value };
     ksuctl(ksu_uapi::KSU_IOCTL_SET_FEATURE, &raw mut cmd)?;
@@ -301,7 +301,6 @@ pub fn get_sulog_fd() -> Result<RawFd> {
     Ok(result)
 }
 
-/// Get mark status for a process (pid=0 returns total marked count)
 pub fn mark_get(pid: i32) -> Result<u32> {
     let mut cmd = ksu_uapi::ksu_manage_mark_cmd {
         operation: ksu_uapi::KSU_MARK_GET,
@@ -312,7 +311,6 @@ pub fn mark_get(pid: i32) -> Result<u32> {
     Ok(cmd.result)
 }
 
-/// Mark a process (pid=0 marks all processes)
 pub fn mark_set(pid: i32) -> Result<()> {
     let mut cmd = ksu_uapi::ksu_manage_mark_cmd {
         operation: ksu_uapi::KSU_MARK_MARK,
@@ -323,7 +321,6 @@ pub fn mark_set(pid: i32) -> Result<()> {
     Ok(())
 }
 
-/// Unmark a process (pid=0 unmarks all processes)
 pub fn mark_unset(pid: i32) -> Result<()> {
     let mut cmd = ksu_uapi::ksu_manage_mark_cmd {
         operation: ksu_uapi::KSU_MARK_UNMARK,
@@ -334,7 +331,6 @@ pub fn mark_unset(pid: i32) -> Result<()> {
     Ok(())
 }
 
-/// Refresh mark for all running processes
 pub fn mark_refresh() -> Result<()> {
     let mut cmd = ksu_uapi::ksu_manage_mark_cmd {
         operation: ksu_uapi::KSU_MARK_REFRESH,
@@ -354,7 +350,6 @@ pub fn nuke_ext4_sysfs(mnt: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Wipe all entries from umount list
 pub fn umount_list_wipe() -> Result<()> {
     let mut cmd = ksu_uapi::ksu_add_try_umount_cmd {
         arg: 0,
@@ -365,7 +360,6 @@ pub fn umount_list_wipe() -> Result<()> {
     Ok(())
 }
 
-/// Add mount point to umount list
 pub fn umount_list_add(path: &str, flags: u32) -> anyhow::Result<()> {
     let c_path = std::ffi::CString::new(path)?;
     let mut cmd = ksu_uapi::ksu_add_try_umount_cmd {
@@ -377,7 +371,6 @@ pub fn umount_list_add(path: &str, flags: u32) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Delete mount point from umount list
 pub fn umount_list_del(path: &str) -> anyhow::Result<()> {
     let c_path = std::ffi::CString::new(path)?;
     let mut cmd = ksu_uapi::ksu_add_try_umount_cmd {
@@ -389,7 +382,6 @@ pub fn umount_list_del(path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Set current process's process group to init_group (pgid = 0)
 pub fn set_init_pgrp() -> Result<()> {
     ksuctl(
         ksu_uapi::KSU_IOCTL_SET_INIT_PGRP,
