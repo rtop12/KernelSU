@@ -23,313 +23,108 @@ struct Args {
 
 #[derive(clap::Subcommand, Debug)]
 enum Commands {
-    /// Manage KernelSU modules
-    Module {
-        #[command(subcommand)]
-        command: Module,
-    },
-
-    /// Trigger `post-fs-data` event
+    Module { #[command(subcommand)] command: Module },
     PostFsData,
-
-    /// Trigger `service` event
     Services,
-
-    /// Run sulog reader daemon. Not for user. Use `ksud debug sulogd` to launch daemon.
     #[command(hide = true)]
     Sulogd,
-
-    /// Trigger `boot-complete` event
     BootCompleted,
-
-    /// Load kernelsu.ko and execute late-load stage scripts
     LateLoad {
-        /// Use adb root to execute late-load for jailbreaking by Magica
         #[arg(long, default_missing_value = "5555", num_args = 0..=1)]
         magica: Option<u16>,
-
-        /// Pass allow_shell=1 when loading kernelsu.ko
         #[arg(long)]
         allow_shell: bool,
-
-        /// Restore adb properties after magica late-load
         #[arg(long)]
         post_magica: bool,
-
-        /// Specify kernel KMI version instead of auto-detection
         #[arg(long)]
         kmi: Option<String>,
-
-        /// manager package name
         #[arg(long, default_value_t = String::from(defs::DEFAULT_PACKAGE_NAME))]
         package_name: String,
     },
-
-    /// Emulate system reboot
     SoftReboot,
-
-    /// Load a kernel module with kallsyms access
     Insmod {
-        /// kernel module path
         module: PathBuf,
-        /// module load parameters (e.g. key=val key2=val2)
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 0..)]
         params: Vec<String>,
     },
-
-    /// Install KernelSU userspace component to system
     Install {
         #[arg(long, default_value = None)]
         libadbroot: Option<PathBuf>,
-
         #[arg(long, default_value = None)]
         data_path: Option<PathBuf>,
     },
-
-    /// Unload KernelSU kernel module (LKM Only)
     Unload,
-
-    /// Uninstall KernelSU modules and itself(LKM Only)
     Uninstall {
         #[arg(long, default_value_t = String::from(defs::DEFAULT_PACKAGE_NAME))]
         package_name: String,
     },
-
-    /// SELinux policy Patch tool
-    Sepolicy {
-        #[command(subcommand)]
-        command: Sepolicy,
-    },
-
-    /// Manage App Profiles
-    Profile {
-        #[command(subcommand)]
-        command: Profile,
-    },
-
-    /// Manage kernel features
-    Feature {
-        #[command(subcommand)]
-        command: Feature,
-    },
-
-    /// Patch boot or init_boot images to apply KernelSU
+    Sepolicy { #[command(subcommand)] command: Sepolicy },
+    Profile { #[command(subcommand)] command: Profile },
+    Feature { #[command(subcommand)] command: Feature },
     BootPatch(BootPatchArgs),
-
-    /// Restore boot or init_boot images patched by KernelSU
     BootRestore(BootRestoreArgs),
-
-    /// Patch KernelSU into a boot image
-    ///
-    /// Always operates on a boot image; never selects init_boot or vendor_boot.
     BootPatchV2(BootPatchV2Args),
-
-    /// Show boot information
-    BootInfo {
-        #[command(subcommand)]
-        command: BootInfo,
-    },
-    /// For developers
-    Debug {
-        #[command(subcommand)]
-        command: Debug,
-    },
-    /// Kernel interface
-    Kernel {
-        #[command(subcommand)]
-        command: Kernel,
-    },
-
-    /// Resetprop - Magisk-compatible system property tool
+    BootInfo { #[command(subcommand)] command: BootInfo },
+    Debug { #[command(subcommand)] command: Debug },
+    Kernel { #[command(subcommand)] command: Kernel },
     #[command(disable_help_flag = true)]
     Resetprop {
-        /// Arguments passed to resetprop
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, num_args = 0..)]
         args: Vec<String>,
     },
-
-    /// Manage initrc injection
-    Initrc {
-        #[command(subcommand)]
-        command: Initrc,
-    },
-    
-    /// Set custom su alias path (default: /system/bin/su)
-    SetSuAlias {
-        /// The custom path, e.g., /system/bin/mysu (leave empty to reset to default)
-        path: String,
-    },
+    Initrc { #[command(subcommand)] command: Initrc },
+    SetSuAlias { path: String },
 }
 
 #[derive(clap::Subcommand, Debug)]
 enum BootInfo {
-    /// show current kmi version
     CurrentKmi,
-
-    /// show supported kmi versions
     SupportedKmis,
-
-    /// check if device is A/B capable
     IsAbDevice,
-
-    /// show auto-selected boot partition name
     DefaultPartition,
-
-    /// list available partitions for current or OTA toggled slot
     AvailablePartitions,
-
-    /// show slot suffix for current or OTA toggled slot
-    SlotSuffix {
-        /// toggle to another slot
-        #[arg(short = 'u', long, default_value = "false")]
-        ota: bool,
-    },
+    SlotSuffix { #[arg(short = 'u', long, default_value = "false")] ota: bool },
 }
 
 #[derive(clap::Subcommand, Debug)]
 enum Debug {
-    /// Set the manager app, kernel CONFIG_KSU_DEBUG should be enabled.
-    SetManager {
-        /// manager package name
-        #[arg(default_value_t = String::from(defs::DEFAULT_PACKAGE_NAME))]
-        apk: String,
-    },
-
-    /// Get apk size and hash
-    GetSign {
-        /// apk path
-        apk: String,
-    },
-
-    /// Root Shell
-    Su {
-        /// switch to gloabl mount namespace
-        #[arg(short, long, default_value = "false")]
-        global_mnt: bool,
-    },
-
-    /// Get kernel version
+    SetManager { #[arg(default_value_t = String::from(defs::DEFAULT_PACKAGE_NAME))] apk: String },
+    GetSign { apk: String },
+    Su { #[arg(short, long, default_value = "false")] global_mnt: bool },
     Version,
-
-    /// For testing
     Test,
-
-    /// Extract an embedded binary to a specified path
-    ExtractBinary {
-        /// binary name (e.g. busybox, resetprop, bootctl)
-        name: String,
-        /// destination file path
-        path: PathBuf,
-    },
-
-    /// Process mark management
-    Mark {
-        #[command(subcommand)]
-        command: MarkCommand,
-    },
-
-    /// Launch sulogd daemon manually
+    ExtractBinary { name: String, path: PathBuf },
+    Mark { #[command(subcommand)] command: MarkCommand },
     Sulogd,
-
-    /// Get kernel info
     Info,
-
-    /// Print default package name
     Package,
 }
 
 #[derive(clap::Subcommand, Debug)]
 enum MarkCommand {
-    /// Get mark status for a process (or all)
-    Get {
-        /// target pid (0 for total count)
-        #[arg(default_value = "0")]
-        pid: i32,
-    },
-
-    /// Mark a process
-    Mark {
-        /// target pid (0 for all processes)
-        #[arg(default_value = "0")]
-        pid: i32,
-    },
-
-    /// Unmark a process
-    Unmark {
-        /// target pid (0 for all processes)
-        #[arg(default_value = "0")]
-        pid: i32,
-    },
-
-    /// Refresh mark for all running processes
+    Get { #[arg(default_value = "0")] pid: i32 },
+    Mark { #[arg(default_value = "0")] pid: i32 },
+    Unmark { #[arg(default_value = "0")] pid: i32 },
     Refresh,
 }
 
 #[derive(clap::Subcommand, Debug)]
 enum Sepolicy {
-    /// Patch sepolicy
-    Patch {
-        /// sepolicy statements
-        sepolicy: String,
-    },
-
-    /// Apply sepolicy from file
-    Apply {
-        /// sepolicy file path
-        file: String,
-    },
-
-    /// Check if sepolicy statement is supported/valid
-    Check {
-        /// sepolicy statements
-        sepolicy: String,
-    },
+    Patch { sepolicy: String },
+    Apply { file: String },
+    Check { sepolicy: String },
 }
 
 #[derive(clap::Subcommand, Debug)]
 enum Module {
-    /// Install module <ZIP>
-    Install {
-        /// module zip file path
-        zip: String,
-    },
-
-    /// Undo module uninstall mark <id>
-    UndoUninstall {
-        /// module id
-        id: String,
-    },
-
-    /// Uninstall module <id>
-    Uninstall {
-        /// module id
-        id: String,
-    },
-
-    /// enable module <id>
-    Enable {
-        /// module id
-        id: String,
-    },
-
-    /// disable module <id>
-    Disable {
-        // module id
-        id: String,
-    },
-
-    /// run action for module <id>
-    Action {
-        // module id
-        id: String,
-    },
-
-    /// list all modules
+    Install { zip: String },
+    UndoUninstall { id: String },
+    Uninstall { id: String },
+    Enable { id: String },
+    Disable { id: String },
+    Action { id: String },
     List,
-
-    /// manage module configuration
     Config {
-        /// target internal module name (resolved as internal.<name>)
         #[arg(long)]
         internal: Option<String>,
         #[command(subcommand)]
@@ -339,159 +134,56 @@ enum Module {
 
 #[derive(clap::Subcommand, Debug)]
 enum ModuleConfigCmd {
-    /// Get a config value
-    Get {
-        /// config key
-        key: String,
-    },
-
-    /// Set a config value
+    Get { key: String },
     Set {
-        /// config key
         key: String,
-        /// config value (omit to read from stdin)
         value: Option<String>,
-        /// read value from stdin (default if value not provided)
         #[arg(long)]
         stdin: bool,
-        /// use temporary config (cleared on reboot)
         #[arg(short, long)]
         temp: bool,
     },
-
-    /// List all config entries
     List,
-
-    /// Delete a config entry
-    Delete {
-        /// config key
-        key: String,
-        /// delete from temporary config
-        #[arg(short, long)]
-        temp: bool,
-    },
-
-    /// Clear all config entries
-    Clear {
-        /// clear temporary config
-        #[arg(short, long)]
-        temp: bool,
-    },
+    Delete { key: String, #[arg(short, long)] temp: bool },
+    Clear { #[arg(short, long)] temp: bool },
 }
 
 #[derive(clap::Subcommand, Debug)]
 enum Profile {
-    /// get root profile's selinux policy of <package-name>
-    GetSepolicy {
-        /// package name
-        package: String,
-    },
-
-    /// set root profile's selinux policy of <package-name> to <profile>
-    SetSepolicy {
-        /// package name
-        package: String,
-        /// policy statements
-        policy: String,
-    },
-
-    /// get template of <id>
-    GetTemplate {
-        /// template id
-        id: String,
-    },
-
-    /// set template of <id> to <template string>
-    SetTemplate {
-        /// template id
-        id: String,
-        /// template string
-        template: String,
-    },
-
-    /// delete template of <id>
-    DeleteTemplate {
-        /// template id
-        id: String,
-    },
-
-    /// list all templates
+    GetSepolicy { package: String },
+    SetSepolicy { package: String, policy: String },
+    GetTemplate { id: String },
+    SetTemplate { id: String, template: String },
+    DeleteTemplate { id: String },
     ListTemplates,
 }
 
 #[derive(clap::Subcommand, Debug)]
 enum Feature {
-    /// Get feature value and support status
-    Get {
-        /// Feature ID or name (su_compat, kernel_umount, sulog, adb_root, selinux_hide, shell_su_adb_only)
-        id: String,
-        /// Read from config file
-        #[arg(long, default_value_t = false)]
-        config: bool,
-    },
-
-    /// Set feature value
-    Set {
-        /// Feature ID or name
-        id: String,
-        /// Feature value (0=disable, 1=enable)
-        value: u64,
-    },
-
-    /// List all available features
+    Get { id: String, #[arg(long, default_value_t = false)] config: bool },
+    Set { id: String, value: u64 },
     List,
-
-    /// Check feature status (supported/unsupported/managed/forced)
-    Check {
-        /// Feature ID or name (su_compat, kernel_umount, sulog, adb_root, selinux_hide, shell_su_adb_only)
-        id: String,
-    },
-
-    /// Load configuration from file and apply to kernel
+    Check { id: String },
     Load,
-
-    /// Save current kernel feature states to file
     Save,
 }
 
 #[derive(clap::Subcommand, Debug)]
 enum Kernel {
-    /// Nuke ext4 sysfs
-    NukeExt4Sysfs {
-        /// mount point
-        mnt: String,
-    },
-    /// Manage umount list
-    Umount {
-        #[command(subcommand)]
-        command: UmountOp,
-    },
-    /// Notify that module is mounted
+    NukeExt4Sysfs { mnt: String },
+    Umount { #[command(subcommand)] command: UmountOp },
     NotifyModuleMounted,
 }
 
 #[derive(clap::Subcommand, Debug)]
 enum UmountOp {
-    /// Add mount point to umount list
-    Add {
-        /// mount point path
-        mnt: String,
-        /// umount flags (default: 0, MNT_DETACH: 2)
-        #[arg(short, long, default_value = "0")]
-        flags: u32,
-    },
-    /// Delete mount point from umount list
-    Del {
-        /// mount point path
-        mnt: String,
-    },
-    /// Wipe all entries from umount list
+    Add { mnt: String, #[arg(short, long, default_value = "0")] flags: u32 },
+    Del { mnt: String },
     Wipe,
 }
 
 #[derive(clap::Subcommand, Debug)]
 enum Initrc {
-    /// Regenerate preinit rc file
     Refresh,
 }
 
@@ -504,7 +196,6 @@ pub fn run() -> Result<()> {
 
     ksucalls::setup_sigsys_handler();
 
-    // the kernel executes su with argv[0] = "su" and replace it with us
     let arg0 = std::env::args().next().unwrap_or_default();
     let mut is_root_request = arg0 == "su" || arg0.ends_with("/su");
 
@@ -542,41 +233,27 @@ pub fn run() -> Result<()> {
             init_event::on_boot_completed();
             Ok(())
         }
-
         Commands::SoftReboot => crate::soft_reboot::soft_reboot(),
-
         Commands::Insmod { module, params } => debug::insmod(&module, &params),
         
         Commands::SetSuAlias { path } => {
-            let sysfs_path = "/sys/module/kernelsu/parameters/custom_su_path";
             let default_path = "/system/bin/su";
             
             if path.is_empty() || path == default_path {
-                // 留空或设为默认：删除本地记录，并尝试让内核恢复默认拦截
                 let _ = std::fs::remove_file(defs::SU_ALIAS_PATH);
-                
-                if let Err(e) = std::fs::write(sysfs_path, default_path) {
-                    println!("[-] 警告: 无法写入内核参数恢复默认值。可能是内核模块未暴露 sysfs 或被 SELinux 拦截。");
-                    println!("[-] 详细错误: {e}");
-                } else {
-                    println!("[*] 已重置 su 别名为默认路径: {}", default_path);
+                match ksucalls::set_su_path(default_path) {
+                    Ok(_) => println!("Reset su alias to default: {}", default_path),
+                    Err(e) => println!("Failed to write kernel: {e}"),
                 }
             } else {
-                // 设置自定义路径：必须先成功写入内核，才写入本地文件
-                match std::fs::write(sysfs_path, &path) {
+                match ksucalls::set_su_path(&path) {
                     Ok(_) => {
-                        // 内核写入成功，记录到本地，方便下次开机恢复
                         let _ = std::fs::write(defs::SU_ALIAS_PATH, &path);
-                        println!("[*] 成功设置 su 别名为: {}", path);
+                        println!("Set su alias to: {}", path);
                     }
                     Err(e) => {
-                        // 内核写入失败，绝不写入本地文件，防止重启后变砖！
-                        println!("[-] 错误: 无法写入内核参数 {}。", sysfs_path);
-                        println!("[-] 详细错误: {e}");
-                        println!("[-] 操作已中止，未修改本地配置。请检查内核是否隐藏了 sysfs (kobject_del) 或 SELinux 拦截。");
-                        
-                        // 抛出错误让 cli 知道操作失败了
-                        anyhow::bail!("Failed to set su alias: kernel write error");
+                        println!("Failed to write kernel: {e}");
+                        anyhow::bail!("Failed to set su alias via ioctl");
                     }
                 }
             }
@@ -606,7 +283,6 @@ pub fn run() -> Result<()> {
 
                     match command {
                         ModuleConfigCmd::Get { key } => {
-                            // Use merge_configs to respect priority (temp overrides persist)
                             let config = module_config::merge_configs(&module_id)?;
                             match config.get(&key) {
                                 Some(value) => {
@@ -617,42 +293,21 @@ pub fn run() -> Result<()> {
                             }
                         }
                         ModuleConfigCmd::Set {
-                            key,
-                            value,
-                            stdin,
-                            temp,
+                            key, value, stdin, temp,
                         } => {
-                            // Validate key at CLI layer for better user experience
                             module_config::validate_config_key(&key)?;
-
-                            // Read value from stdin or argument
                             let value_str = match value {
                                 Some(v) if !stdin => v,
                                 _ => {
-                                    // Read from stdin
                                     use std::io::Read;
                                     let mut buffer = String::new();
-                                    std::io::stdin()
-                                        .read_to_string(&mut buffer)
-                                        .context("Failed to read from stdin")?;
+                                    std::io::stdin().read_to_string(&mut buffer).context("Failed to read from stdin")?;
                                     buffer
                                 }
                             };
-
-                            // Validate value
                             module_config::validate_config_value(&value_str)?;
-
-                            let config_type = if temp {
-                                module_config::ConfigType::Temp
-                            } else {
-                                module_config::ConfigType::Persist
-                            };
-                            module_config::set_config_value(
-                                &module_id,
-                                &key,
-                                &value_str,
-                                config_type,
-                            )
+                            let config_type = if temp { module_config::ConfigType::Temp } else { module_config::ConfigType::Persist };
+                            module_config::set_config_value(&module_id, &key, &value_str, config_type)
                         }
                         ModuleConfigCmd::List => {
                             let config = module_config::merge_configs(&module_id)?;
@@ -666,29 +321,18 @@ pub fn run() -> Result<()> {
                             Ok(())
                         }
                         ModuleConfigCmd::Delete { key, temp } => {
-                            let config_type = if temp {
-                                module_config::ConfigType::Temp
-                            } else {
-                                module_config::ConfigType::Persist
-                            };
+                            let config_type = if temp { module_config::ConfigType::Temp } else { module_config::ConfigType::Persist };
                             module_config::delete_config_value(&module_id, &key, config_type)
                         }
                         ModuleConfigCmd::Clear { temp } => {
-                            let config_type = if temp {
-                                module_config::ConfigType::Temp
-                            } else {
-                                module_config::ConfigType::Persist
-                            };
+                            let config_type = if temp { module_config::ConfigType::Temp } else { module_config::ConfigType::Persist };
                             module_config::clear_config(&module_id, config_type)
                         }
                     }
                 }
             }
         }
-        Commands::Install {
-            libadbroot,
-            data_path,
-        } => utils::install(libadbroot, data_path),
+        Commands::Install { libadbroot, data_path } => utils::install(libadbroot, data_path),
         Commands::Unload => crate::unload::unload(),
         Commands::Uninstall { package_name } => utils::uninstall(&package_name),
         Commands::Sepolicy { command } => match command {
@@ -696,13 +340,7 @@ pub fn run() -> Result<()> {
             Sepolicy::Apply { file } => crate::sepolicy::apply_file(file),
             Sepolicy::Check { sepolicy } => crate::sepolicy::check_rule(&sepolicy),
         },
-        Commands::LateLoad {
-            magica,
-            allow_shell,
-            post_magica,
-            kmi,
-            package_name,
-        } => {
+        Commands::LateLoad { magica, allow_shell, post_magica, kmi, package_name } => {
             if let Some(port) = magica {
                 return crate::magica::run(port, &package_name, allow_shell).map_err(|e| {
                     error!("Error running magica: {e}");
@@ -729,33 +367,22 @@ pub fn run() -> Result<()> {
         Commands::Sulogd => sulog::run_sulogd(),
         Commands::Profile { command } => match command {
             Profile::GetSepolicy { package } => crate::profile::get_sepolicy(package),
-            Profile::SetSepolicy { package, policy } => {
-                crate::profile::set_sepolicy(package, policy)
-            }
+            Profile::SetSepolicy { package, policy } => crate::profile::set_sepolicy(package, policy),
             Profile::GetTemplate { id } => crate::profile::get_template(id),
             Profile::SetTemplate { id, template } => crate::profile::set_template(id, template),
             Profile::DeleteTemplate { id } => crate::profile::delete_template(id),
             Profile::ListTemplates => crate::profile::list_templates(),
         },
-
         Commands::Feature { command } => match command {
             Feature::Get { id, config } => {
-                if config {
-                    crate::feature::get_feature_config(&id)
-                } else {
-                    crate::feature::get_feature(&id)
-                }
+                if config { crate::feature::get_feature_config(&id) } else { crate::feature::get_feature(&id) }
             }
             Feature::Set { id, value } => crate::feature::set_feature(&id, value),
-            Feature::List => {
-                crate::feature::list_features();
-                Ok(())
-            }
+            Feature::List => { crate::feature::list_features(); Ok(()) }
             Feature::Check { id } => crate::feature::check_feature(&id),
             Feature::Load => crate::feature::load_config_and_apply(),
             Feature::Save => crate::feature::save_config(),
         },
-
         Commands::Debug { command } => match command {
             Debug::SetManager { apk } => debug::set_manager(&apk),
             Debug::GetSign { apk } => {
@@ -763,10 +390,7 @@ pub fn run() -> Result<()> {
                 println!("size: {:#x}, hash: {}", sign.0, sign.1);
                 Ok(())
             }
-            Debug::Version => {
-                println!("Kernel Version: {}", ksucalls::get_version());
-                Ok(())
-            }
+            Debug::Version => { println!("Kernel Version: {}", ksucalls::get_version()); Ok(()) }
             Debug::Su { global_mnt } => crate::su::grant_root(global_mnt),
             Debug::Test => assets::ensure_binaries(false),
             Debug::ExtractBinary { name, path } => {
@@ -787,63 +411,34 @@ pub fn run() -> Result<()> {
                 println!("uapi_version: {}", info.uapi_version);
                 println!("features: 0x{:x}", info.features);
                 println!("lkm: {}", ksucalls::is_lkm());
-                println!(
-                    "bundled: {}",
-                    (info.flags & ksu_uapi::KSU_GET_INFO_FLAG_BUNDLED) != 0
-                );
+                println!("bundled: {}", (info.flags & ksu_uapi::KSU_GET_INFO_FLAG_BUNDLED) != 0);
                 println!("late_load: {}", ksucalls::is_late_load());
                 println!("runtime_mode: {}", ksucalls::runtime_mode());
-                println!(
-                    "pr_build: {}",
-                    (info.flags & ksu_uapi::KSU_GET_INFO_FLAG_PR_BUILD) != 0
-                );
+                println!("pr_build: {}", (info.flags & ksu_uapi::KSU_GET_INFO_FLAG_PR_BUILD) != 0);
                 Ok(())
             }
-            Debug::Package => {
-                println!("{}", defs::DEFAULT_PACKAGE_NAME);
-                Ok(())
-            }
+            Debug::Package => { println!("{}", defs::DEFAULT_PACKAGE_NAME); Ok(()) }
         },
-
         Commands::BootPatch(boot_patch) => crate::boot_patch::patch(boot_patch),
-
         Commands::BootInfo { command } => match command {
-            BootInfo::CurrentKmi => {
-                let kmi = crate::boot_patch::get_current_kmi()?;
-                println!("{kmi}");
-                // return here to avoid printing the error message
-                return Ok(());
-            }
+            BootInfo::CurrentKmi => { println!("{}", crate::boot_patch::get_current_kmi()?); return Ok(()); }
             BootInfo::SupportedKmis => {
-                let kmi = crate::assets::list_supported_kmi();
-                for kmi in &kmi {
-                    println!("{kmi}");
-                }
+                for kmi in &crate::assets::list_supported_kmi() { println!("{kmi}"); }
                 return Ok(());
             }
             BootInfo::IsAbDevice => {
-                let val = crate::utils::getprop("ro.build.ab_update")
-                    .unwrap_or_else(|| String::from("false"));
-                let is_ab = val.trim().to_lowercase() == "true";
-                println!("{}", if is_ab { "true" } else { "false" });
+                let val = crate::utils::getprop("ro.build.ab_update").unwrap_or_else(|| String::from("false"));
+                println!("{}", if val.trim().to_lowercase() == "true" { "true" } else { "false" });
                 return Ok(());
             }
             BootInfo::DefaultPartition => {
                 let kmi = crate::boot_patch::get_current_kmi().unwrap_or_else(|_| String::new());
-                let name = crate::boot_patch::choose_boot_partition(&kmi, false, &None);
-                println!("{name}");
+                println!("{}", crate::boot_patch::choose_boot_partition(&kmi, false, &None));
                 return Ok(());
             }
-            BootInfo::SlotSuffix { ota } => {
-                let suffix = crate::boot_patch::get_slot_suffix(ota);
-                println!("{suffix}");
-                return Ok(());
-            }
+            BootInfo::SlotSuffix { ota } => { println!("{}", crate::boot_patch::get_slot_suffix(ota)); return Ok(()); }
             BootInfo::AvailablePartitions => {
-                let parts = crate::boot_patch::list_available_partitions();
-                for p in &parts {
-                    println!("{p}");
-                }
+                for p in &crate::boot_patch::list_available_partitions() { println!("{p}"); }
                 return Ok(());
             }
         },
@@ -854,7 +449,6 @@ pub fn run() -> Result<()> {
             full_args.extend(args);
             crate::resetprop::resetprop_main(&full_args)
         }
-
         Commands::Kernel { command } => match command {
             Kernel::NukeExt4Sysfs { mnt } => ksucalls::nuke_ext4_sysfs(&mnt),
             Kernel::Umount { command } => match command {
@@ -862,10 +456,7 @@ pub fn run() -> Result<()> {
                 UmountOp::Del { mnt } => ksucalls::umount_list_del(&mnt),
                 UmountOp::Wipe => ksucalls::umount_list_wipe(),
             },
-            Kernel::NotifyModuleMounted => {
-                ksucalls::report_module_mounted();
-                Ok(())
-            }
+            Kernel::NotifyModuleMounted => { ksucalls::report_module_mounted(); Ok(()) }
         },
         Commands::Initrc { command } => match command {
             Initrc::Refresh => regenerate_preinit_rc(),
