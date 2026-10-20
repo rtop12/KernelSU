@@ -1,12 +1,11 @@
 use anyhow::{bail, Context, Result};
 use libc::{c_int, c_void};
+use std::path::Path;
 
-const PTRACE_PEEKDATA: c_int = 2;
 const PTRACE_POKEDATA: c_int = 5;
 const PTRACE_ATTACH: c_int = 16;
 const PTRACE_DETACH: c_int = 17;
 const PTRACE_CONT: c_int = 7;
-const PTRACE_SINGLESTEP: c_int = 9;
 
 const PTRACE_GETREGSET: c_int = 0x4204;
 const PTRACE_SETREGSET: c_int = 0x4205;
@@ -93,10 +92,16 @@ fn write_remote(pid: i32, dst: u64, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// 解析 so 在目标进程里的加载基址。
+///
+/// 一个 so 在 /proc/<pid>/maps 里通常有多段（r--p、r-xp、rw-p...），
+/// 必须先找到带 `x` 权限的段，否则 `base + sym_value` 算出来的函数地址会落在不可执行段，
+/// `PTRACE_CONT` 一执行就 SIGSEGV。
 fn resolve_so_base(pid: i32, soname: &str) -> Result<(u64, String)> {
     let maps = std::fs::read_to_string(format!("/proc/{pid}/maps"))
         .with_context(|| format!("read /proc/{pid}/maps"))?;
 
+    let mut fallback: Option<(u64, String)> = None;
     for line in maps.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 6 {
@@ -113,9 +118,14 @@ fn resolve_so_base(pid: i32, soname: &str) -> Result<(u64, String)> {
             continue;
         }
         let base = start.saturating_sub(file_offset);
-        return Ok((base, path.to_string()));
+        if parts[1].contains('x') {
+            return Ok((base, path.to_string()));
+        }
+        if fallback.is_none() {
+            fallback = Some((base, path.to_string()));
+        }
     }
-    bail!("{soname} not mapped in pid {pid}")
+    fallback.ok_or_else(|| anyhow::anyhow!("{soname} not mapped in pid {pid}"))
 }
 
 fn resolve_libc_symbol(pid: i32, name: &str) -> Result<u64> {
@@ -190,25 +200,57 @@ fn elf_dynsym_value(data: &[u8], name: &str) -> Result<Option<u64>> {
     Ok(None)
 }
 
+/// 按进程名查找 pid。
+///
+/// 注意：某些进程（如 keystore2）启动后会把主线程 comm 改成 `binder:<pid>_<n>`，
+/// 这时 `/proc/<pid>/comm` 不再是 `keystore2`，但 `/proc/<pid>/cmdline` 的 basename 依然是。
+/// 所以这里采用 cmdline basename 优先、comm 兜底的策略，与 toybox `pidof` 的行为一致。
 pub fn find_pid_by_comm(comm: &str) -> Option<i32> {
-    for entry in std::fs::read_dir("/proc").ok()? {
-        let entry = entry.ok()?;
+    let entries = std::fs::read_dir("/proc").ok()?;
+    let mut comm_fallback: Option<i32> = None;
+    for entry in entries.flatten() {
         let name = entry.file_name();
-        let Some(pid) = name.to_str()?.parse::<i32>().ok() else {
-            continue;
-        };
-        if let Ok(c) = std::fs::read_to_string(format!("/proc/{pid}/comm")) {
-            if c.trim() == comm {
-                return Some(pid);
+        let Some(pid_str) = name.to_str() else { continue };
+        let Ok(pid) = pid_str.parse::<i32>() else { continue };
+
+        // 1) cmdline basename 匹配
+        if let Ok(cmdline) = std::fs::read(format!("/proc/{pid}/cmdline")) {
+            if let Some(first) = cmdline.split(|&b| b == 0).next() {
+                if let Ok(s) = std::str::from_utf8(first) {
+                    if let Some(base) = Path::new(s).file_name().and_then(|n| n.to_str()) {
+                        if base == comm {
+                            return Some(pid);
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2) comm 兜底（记录第一个命中的，避免每次都重读）
+        if comm_fallback.is_none() {
+            if let Ok(c) = std::fs::read_to_string(format!("/proc/{pid}/comm")) {
+                if c.trim() == comm {
+                    comm_fallback = Some(pid);
+                }
             }
         }
     }
-    None
+    comm_fallback
 }
 
+/// 目标进程是否已经加载了指定的 so。
+///
+/// 用 `/proc/<pid>/maps` 的路径字段（第 6 列）做 `ends_with` 匹配，
+/// 避免 `contains` 因子串包含导致的误判。
 pub fn is_already_injected(pid: i32, so_name: &str) -> bool {
     std::fs::read_to_string(format!("/proc/{pid}/maps"))
-        .map(|s| s.lines().any(|l| l.contains(so_name)))
+        .map(|s| {
+            s.lines().any(|l| {
+                l.split_whitespace()
+                    .nth(5)
+                    .is_some_and(|p| p.ends_with(so_name))
+            })
+        })
         .unwrap_or(false)
 }
 
@@ -234,7 +276,7 @@ fn inject_inner(pid: i32, so_path: &str) -> Result<()> {
 
     // 申请内存
     let mmap_fn = resolve_libc_symbol(pid, "mmap")?;
-    
+
     // 准备调用 mmap，lr 设为 0，执行完后会停在不可执行地址触发 SIGSEGV
     let mut regs = saved;
     regs.regs[0] = 0;
@@ -249,7 +291,7 @@ fn inject_inner(pid: i32, so_path: &str) -> Result<()> {
     set_regs(pid, &regs)?;
     ptrace_call(PTRACE_CONT, pid, 0, 0);
     wait_stopped(pid)?;
-    
+
     let mut out = UserRegs::default();
     get_regs(pid, &mut out)?;
     let remote_mem = out.regs[0];
@@ -278,7 +320,7 @@ fn inject_inner(pid: i32, so_path: &str) -> Result<()> {
 
     get_regs(pid, &mut out)?;
     let handle = out.regs[0];
-    
+
     // 恢复原寄存器
     set_regs(pid, &saved)?;
 
