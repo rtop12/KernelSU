@@ -14,7 +14,7 @@ mod android {
 
     pub fn ensure_binaries(ignore_if_exist: bool) -> anyhow::Result<()> {
         for file in Asset::iter() {
-            // 1. 过滤掉不需要释放到 BINARY_DIR 的文件
+            // 过滤掉不需要释放到 BINARY_DIR 的文件
             if file == "ksuinit" 
                 || file == "waitsys" 
                 || file.ends_with(".ko")
@@ -36,12 +36,13 @@ mod android {
         Ok(())
     }
 
-    // 2. 为 Zygisk-Next 添加专用的获取接口
-    pub fn get_zygiskd() -> Result<std::borrow::Cow<'static, [u8]>> {
+    // 修复：使用完整的 anyhow::Result 避免泛型推断错误
+    pub fn get_zygiskd() -> anyhow::Result<std::borrow::Cow<'static, [u8]>> {
         crate::assets::get_asset_data("zygiskd")
     }
 
-    pub fn get_zygisk_lib() -> Result<std::borrow::Cow<'static, [u8]>> {
+    // 修复：使用完整的 anyhow::Result 避免泛型推断错误
+    pub fn get_zygisk_lib() -> anyhow::Result<std::borrow::Cow<'static, [u8]>> {
         crate::assets::get_asset_data("zygisk")
     }
 }
