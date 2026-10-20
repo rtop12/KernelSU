@@ -14,7 +14,13 @@ mod android {
 
     pub fn ensure_binaries(ignore_if_exist: bool) -> anyhow::Result<()> {
         for file in Asset::iter() {
-            if file == "ksuinit" || file == "waitsys" || file.ends_with(".ko") {
+            // 1. 过滤掉不需要释放到 BINARY_DIR 的文件
+            if file == "ksuinit" 
+                || file == "waitsys" 
+                || file.ends_with(".ko")
+                || file == "zygiskd"  // 排除 zygiskd
+                || file == "zygisk"   // 排除 zygisk 库
+            {
                 continue;
             }
             let asset =
@@ -28,6 +34,15 @@ mod android {
         std::os::unix::fs::symlink("/data/adb/kitsune/kitsune", resetprop_link)?;
 
         Ok(())
+    }
+
+    // 2. 为 Zygisk-Next 添加专用的获取接口
+    pub fn get_zygiskd() -> Result<std::borrow::Cow<'static, [u8]>> {
+        crate::assets::get_asset_data("zygiskd")
+    }
+
+    pub fn get_zygisk_lib() -> Result<std::borrow::Cow<'static, [u8]>> {
+        crate::assets::get_asset_data("zygisk")
     }
 }
 
