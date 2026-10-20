@@ -24,6 +24,8 @@ jobs:
     - name: Download artifacts
       uses: actions/download-artifact@v8
     
+        
+    
     - name: Prepare ksuinit
       if: ${{ inputs.pack_ksuinit }}
       run: |
@@ -36,38 +38,13 @@ jobs:
 
     - uses: Swatinem/rust-cache@v2
       with:
-        workspaces: |
-          userspace/ksud
-          userspace/ksud/interceptor
+        workspaces: userspace/ksud
         cache-targets: false
 
     - uses: nttld/setup-ndk@v1
       id: setup-ndk
       with:
         ndk-version: r29
-
-    - name: Build interceptor
-      env:
-        ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
-      run: |
-        source .github/scripts/setup-rust-build.sh ${{ inputs.target }} 26
-        # 恢复正常的动态链接编译
-        cargo build --target "$TRIPLE" --release --manifest-path ./userspace/ksud/interceptor/Cargo.toml
-
-    - name: Copy interceptor lib
-      run: |
-        mkdir -p ./userspace/ksud/bin/aarch64/
-        
-        SO_PATH=$(find userspace/ksud/interceptor/target/${{ inputs.target }}/release -name "libinterceptor.so" | head -n 1)
-        
-        if [ -z "$SO_PATH" ]; then
-          echo "ERROR: libinterceptor.so not found"
-          find userspace/ksud/interceptor/target -name "*.so" || true
-          exit 1
-        fi
-        
-        cp "$SO_PATH" ./userspace/ksud/bin/aarch64/libinterceptor.so
-        echo "Copied from $SO_PATH"
 
     - name: Build ksud
       env:
