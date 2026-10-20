@@ -163,8 +163,19 @@ fn deploy_builtin_zygisk() -> Result<()> {
     std::fs::write(&zygisk_lib_path, &zygisk_lib_data)?;
     std::fs::set_permissions(&zygisk_lib_path, std::fs::Permissions::from_mode(0o644))?;
 
+    // 新增：写入启动脚本，确保 zygiskd 被拉起
+    let post_fs_data_path = module_path.join("post-fs-data.sh");
+    let post_fs_data_content = r#"#!/system/bin/sh
+MODDIR=${0%/*}
+# 启动 zygiskd 并放到后台
+$MODDIR/zygiskd &
+"#;
+    std::fs::write(&post_fs_data_path, post_fs_data_content)?;
+    std::fs::set_permissions(&post_fs_data_path, std::fs::Permissions::from_mode(0o755))?;
+
     let _ = restorecon::lsetfilecon(&zygiskd_path, restorecon::KSU_CON);
     let _ = restorecon::lsetfilecon(&zygisk_lib_path, restorecon::KSU_CON);
+    let _ = restorecon::lsetfilecon(&post_fs_data_path, restorecon::KSU_CON);
 
     info!("Built-in Zygisk-Next deployed successfully to {module_dir}");
     Ok(())
