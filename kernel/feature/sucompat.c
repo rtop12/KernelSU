@@ -33,7 +33,8 @@
 
 bool ksu_su_compat_enabled __read_mostly = true;
 
-char ksu_custom_su_path[128] __read_mostly = "/system/bin/su";
+// 修复：去掉 __read_mostly 并加上 volatile，防止编译器将其优化为常量
+volatile char ksu_custom_su_path[128] = "/system/bin/su";
 module_param_string(custom_su_path, ksu_custom_su_path, sizeof(ksu_custom_su_path), 0644);
 MODULE_PARM_DESC(custom_su_path, "Custom path for su binary");
 
@@ -101,8 +102,11 @@ long ksu_handle_faccessat_sucompat(int orig_nr, struct pt_regs *regs)
     memset(path, 0, sizeof(path));
     strncpy_from_user_nofault(path, *filename_user, sizeof(path) - 1);
 
-    // [修改点 1] 仅匹配内核中保存的路径
-    if (unlikely(!strcmp(path, ksu_custom_su_path))) {
+    // 强制从内存读取最新的路径
+    char current_su_path[128];
+    strscpy(current_su_path, (const char *)ksu_custom_su_path, sizeof(current_su_path));
+
+    if (unlikely(!strcmp(path, current_su_path))) {
         old_cred = override_creds(ksu_cred);
         if (is_ksud_exists()) {
             pr_info("faccessat su->ksud!\n");
@@ -137,8 +141,11 @@ long ksu_handle_stat_sucompat(int orig_nr, struct pt_regs *regs)
     memset(path, 0, sizeof(path));
     strncpy_from_user_nofault(path, *filename_user, sizeof(path) - 1);
 
-    // [修改点 2] 仅匹配内核中保存的路径
-    if (unlikely(!strcmp(path, ksu_custom_su_path))) {
+    // 强制从内存读取最新的路径
+    char current_su_path[128];
+    strscpy(current_su_path, (const char *)ksu_custom_su_path, sizeof(current_su_path));
+
+    if (unlikely(!strcmp(path, current_su_path))) {
         old_cred = override_creds(ksu_cred);
         if (is_ksud_exists()) {
             pr_info("newfstatat su->ksud!\n");
@@ -191,8 +198,11 @@ static long ksu_handle_execve_sucompat_common(const char __user **filename_user,
         goto do_orig_execve;
     }
 
-    // [修改点 3] 仅匹配内核中保存的路径
-    if (strcmp(path, ksu_custom_su_path))
+    // 强制从内存读取最新的路径
+    char current_su_path[128];
+    strscpy(current_su_path, (const char *)ksu_custom_su_path, sizeof(current_su_path));
+
+    if (strcmp(path, current_su_path))
         goto do_orig_execve;
 
     pr_info("sys_execve su found: %s\n", path);
