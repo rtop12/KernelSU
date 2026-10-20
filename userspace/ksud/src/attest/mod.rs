@@ -118,6 +118,19 @@ pub fn cli_verify() -> Result<()> {
 
 pub fn cli_inject(pid: i32) -> Result<()> {
     println!("Manually injecting into pid: {}", pid);
+
+    // 动态下发 SELinux 规则，允许 keystore 和 keystore2 读取并执行我们的文件
+    let sepolicy = "allow keystore ksu_file file { read open map execute getattr }; allow keystore2 ksu_file file { read open map execute getattr };";
+    println!("Applying sepolicy: {}", sepolicy);
+
+    // 调用 ksud 自身的 sepolicy 功能
+    let exe = std::env::current_exe()
+        .unwrap_or_else(|_| std::path::PathBuf::from("/data/adb/kitsune/kitsune"));
+    let _ = std::process::Command::new(exe)
+        .args(["sepolicy", "patch", sepolicy])
+        .status();
+
+    // 执行注入
     injector::inject(pid, defs::ATTEST_LIB_PATH)?;
     println!("Injection command sent successfully!");
     Ok(())
