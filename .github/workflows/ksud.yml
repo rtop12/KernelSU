@@ -51,18 +51,26 @@ jobs:
         ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
       run: |
         source .github/scripts/setup-rust-build.sh ${{ inputs.target }} 26
+        
+        # 强制静态链接 C 运行时，生成无依赖的 so
+        export RUSTFLAGS="-C target-feature=+crt-static -C link-arg=-Wl,-z,max-page-size=16384"
+        
+        # 编译 interceptor
         cargo build --target "$TRIPLE" --release --manifest-path ./userspace/ksud/interceptor/Cargo.toml
 
     - name: Copy interceptor lib
       run: |
         mkdir -p ./userspace/ksud/bin/aarch64/
-        # 在 interceptor 独立的 target 目录里查找编译产物
+        
+        # 查找生成的 libinterceptor.so（因为在独立 workspace 下编译，产物路径可能不同）
         SO_PATH=$(find userspace/ksud/interceptor/target/${{ inputs.target }}/release -name "libinterceptor.so" | head -n 1)
+        
         if [ -z "$SO_PATH" ]; then
           echo "ERROR: libinterceptor.so not found"
           find userspace/ksud/interceptor/target -name "*.so" || true
           exit 1
         fi
+        
         cp "$SO_PATH" ./userspace/ksud/bin/aarch64/libinterceptor.so
         echo "Copied from $SO_PATH"
 
@@ -74,6 +82,8 @@ jobs:
           export KSU_PACKAGE_NAME="me.weishu.kernelsu.pr"
         fi
         source .github/scripts/setup-rust-build.sh ${{ inputs.target }} 26
+        
+        # ksud 不需要静态链接，不需要设置 RUSTFLAGS
         cargo build --target "$TRIPLE" --release --manifest-path ./userspace/ksud/Cargo.toml
 
     - name: Upload ksud artifact
