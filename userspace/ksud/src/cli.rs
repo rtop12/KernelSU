@@ -508,7 +508,6 @@ pub fn run() -> Result<()> {
     let arg0 = std::env::args().next().unwrap_or_default();
     let mut is_root_request = arg0 == "su" || arg0.ends_with("/su");
 
-    // 修复点：使用 .ok() 避免 anyhow::Ok 的模式匹配冲突
     if !is_root_request {
         if let Some(alias) = std::fs::read_to_string(defs::SU_ALIAS_PATH).ok() {
             let alias = alias.trim();
@@ -553,13 +552,33 @@ pub fn run() -> Result<()> {
             let default_path = "/system/bin/su";
             
             if path.is_empty() || path == default_path {
+                // 留空或设为默认：删除本地记录，并尝试让内核恢复默认拦截
                 let _ = std::fs::remove_file(defs::SU_ALIAS_PATH);
-                std::fs::write(sysfs_path, default_path)?;
-                println!("Reset su alias to default: {}", default_path);
+                
+                if let Err(e) = std::fs::write(sysfs_path, default_path) {
+                    println!("[-] 警告: 无法写入内核参数恢复默认值。可能是内核模块未暴露 sysfs 或被 SELinux 拦截。");
+                    println!("[-] 详细错误: {e}");
+                } else {
+                    println!("[*] 已重置 su 别名为默认路径: {}", default_path);
+                }
             } else {
-                std::fs::write(defs::SU_ALIAS_PATH, &path)?;
-                std::fs::write(sysfs_path, &path)?;
-                println!("Set su alias to: {}", path);
+                // 设置自定义路径：必须先成功写入内核，才写入本地文件
+                match std::fs::write(sysfs_path, &path) {
+                    Ok(_) => {
+                        // 内核写入成功，记录到本地，方便下次开机恢复
+                        let _ = std::fs::write(defs::SU_ALIAS_PATH, &path);
+                        println!("[*] 成功设置 su 别名为: {}", path);
+                    }
+                    Err(e) => {
+                        // 内核写入失败，绝不写入本地文件，防止重启后变砖！
+                        println!("[-] 错误: 无法写入内核参数 {}。", sysfs_path);
+                        println!("[-] 详细错误: {e}");
+                        println!("[-] 操作已中止，未修改本地配置。请检查内核是否隐藏了 sysfs (kobject_del) 或 SELinux 拦截。");
+                        
+                        // 抛出错误让 cli 知道操作失败了
+                        anyhow::bail!("Failed to set su alias: kernel write error");
+                    }
+                }
             }
             Ok(())
         }
