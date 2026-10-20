@@ -13,5 +13,5 @@ extern "C" fn init() {
     crate::log::write("attest: libinterceptor.so loaded successfully!");
     
     // 暂时注释掉 Hook，看看是不是它导致了崩溃
-    hook::install(); 
+    //hook::install(); 
 }
